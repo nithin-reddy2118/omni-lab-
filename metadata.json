@@ -1,0 +1,6 @@
+{
+  "name": "OmniLab",
+  "description": "OMNILAB — WHERE CURIOSITY BECOMES DISCOVERY. An AI-powered virtual science campus where every student can learn, experiment, investigate and innovate — from their first school laboratory to advanced scientific research.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

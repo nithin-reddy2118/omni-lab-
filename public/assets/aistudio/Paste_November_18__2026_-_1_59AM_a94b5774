@@ -1,0 +1,1306 @@
+# OMNILAB — COMPLETE MASTER DEVELOPMENT INSTRUCTIONS
+## Project: BREAK THE RULES, DISCOVER THE SCIENCE
+### STEM FOR IMPACT 2026
+
+**Tagline:** Don't just learn scientific rules. Challenge, explore and discover them.
+
+**Secondary tagline:** Ask anything. Test your prediction. See what changes. Understand why.
+
+You are working on my existing project, **OmniLab**, imported from my GitHub repository.
+
+This is an existing application. I want you to continue developing and completing this application, not create a new project.
+
+Your responsibility is to understand the complete project, inspect its current implementation, improve it, fix errors, integrate all requested features and make the application functional, reliable and ready for a hackathon demonstration.
+
+Do not just produce a design or describe what should be built. Implement the features in the existing codebase.
+
+---
+
+# 1. THE MAIN VISION
+
+OmniLab is an AI-powered interactive science learning and virtual experimentation platform for students, especially Classes 5–10 and students who have limited access to physical laboratories.
+
+The main problem we are solving:
+
+Students often learn STEM through textbooks, memorisation, formulas and theoretical explanations. Many students do not get enough opportunities to perform experiments, explore scientific concepts, change variables, test hypotheses and observe what actually happens.
+
+This problem is particularly significant in rural and underserved schools where laboratory equipment, individual guidance and practical learning opportunities may be limited.
+
+Our platform must transform students from passive learners into active scientific explorers.
+
+Students should be able to:
+
+1. Ask any scientific or academic question.
+2. Understand the concept through a simple explanation.
+3. See a relevant educational video or generated visual demonstration.
+4. Learn how the experiment or concept works.
+5. Create their own experimental setup.
+6. Select and arrange virtual laboratory equipment.
+7. Make predictions before running experiments.
+8. Change variables and parameters.
+9. Run scientifically supported simulations.
+10. Observe results, graphs and measurements.
+11. Compare multiple experiments.
+12. Understand why results changed.
+13. Generate educational videos for topics and problems.
+14. Save, revisit and share their learning work safely.
+
+The platform must support Physics, Chemistry, Biology, Mathematics, Computer Science, Engineering, Astronomy, Environmental Science and other STEM topics.
+
+# 2. MOST IMPORTANT REQUIREMENT: VIDEO PHASE FOR EVERY PROBLEM
+
+My guide specifically instructed me to include a video phase for all problems and topics.
+
+This must become a central feature throughout OmniLab, not just one separate video page.
+
+Whenever a student enters a supported question, problem, theorem, formula, concept or experiment, the platform should provide an appropriate video-learning stage.
+
+The learning flow should be:
+
+**ASK → UNDERSTAND → VIDEO → EXPLORE → EXPERIMENT → OBSERVE → DISCOVER**
+
+For every supported problem:
+
+1. Understand the student's question.
+2. Identify the subject and topic.
+3. Generate a simple, accurate explanation.
+4. Identify the relevant formulas, concepts, definitions and principles.
+5. Find a relevant educational video when a verified source is available.
+6. If no suitable video is available, generate an animated visual demonstration where supported.
+7. Explain the video step by step.
+8. Display the procedure for practical experiments.
+9. Connect the topic to a suitable interactive simulation or Virtual Lab experiment.
+10. Give the student an opportunity to test their understanding.
+
+## Universal Video Learning Engine
+
+Create a reusable video-learning engine that can support:
+
+- Mathematics problems.
+- Physics numerical problems.
+- Chemistry concepts and experiments.
+- Biology processes and experiments.
+- Computer Science algorithms.
+- Engineering concepts.
+- Environmental science.
+- Astronomy and space science.
+- Practical laboratory procedures.
+- Theorems, equations and formulas.
+- General academic topics.
+
+The video experience should change depending on the subject.
+
+### Mathematics video phase
+
+For a mathematical problem:
+
+- Show the question.
+- Identify the given values.
+- Explain the relevant theorem or formula.
+- Show each calculation step.
+- Animate diagrams and mathematical objects.
+- Highlight the reasoning behind each step.
+- Show the final answer.
+- Include a real-life application.
+
+Examples:
+- Pythagoras theorem.
+- Algebra.
+- Geometry.
+- Trigonometry.
+- Calculus.
+- Probability.
+- Statistics.
+
+### Physics video phase
+
+For Physics problems:
+
+- Explain the physical principle.
+- Identify given values and unknown quantities.
+- Display equations and units.
+- Show the calculation step by step.
+- Animate the physical phenomenon.
+- Demonstrate how changing a variable changes the result.
+- Connect to the Virtual Physics Lab when supported.
+
+Examples:
+- Newton's laws.
+- Force and acceleration.
+- Motion.
+- Electricity.
+- Ohm's law.
+- Gravity.
+- Pendulum motion.
+- Optics.
+- Heat and thermodynamics.
+- Waves and sound.
+
+### Chemistry video phase
+
+For Chemistry:
+
+- Explain the concept and scientific principle.
+- Identify relevant substances and equipment.
+- Explain the purpose of each instrument.
+- Show the experimental setup.
+- Explain the procedure in order.
+- Animate supported molecular or chemical processes.
+- Show valid observations and equations.
+- Explain results and conclusions.
+- Display appropriate safety warnings.
+
+Do not invent chemical reactions, gas production, colour changes or experimental outcomes.
+
+Unknown or unsafe chemical combinations must not produce fabricated experimental demonstrations or dangerous instructions.
+
+### Biology video phase
+
+For Biology:
+
+- Explain the biological process.
+- Show labelled diagrams.
+- Animate structures and processes.
+- Explain each stage.
+- Display relevant observations.
+- Connect to the Biology Virtual Lab where supported.
+
+Examples:
+- Cell structure.
+- Photosynthesis.
+- Respiration.
+- DNA.
+- Digestion.
+- Circulation.
+- Reproduction.
+- Plant growth.
+- Ecosystems.
+
+### Computer Science and algorithms video phase
+
+For Computer Science:
+
+- Show the input.
+- Explain the algorithm.
+- Display pseudocode.
+- Animate every execution step.
+- Highlight variable values.
+- Show comparisons and decisions.
+- Explain the output.
+- Show time and space complexity.
+
+Examples:
+- Binary search.
+- Linear search.
+- Bubble sort.
+- Merge sort.
+- Recursion.
+- Data structures.
+- Dynamic programming.
+- Graph algorithms.
+
+### Practical experiment video phase
+
+For every supported practical experiment, use a procedure-first format.
+
+Display:
+
+1. Experiment title.
+2. Aim.
+3. Scientific principle.
+4. Required materials.
+5. Equipment and the purpose of each instrument.
+6. Units and measurements.
+7. Experimental setup.
+8. Connections between instruments.
+9. Safety precautions.
+10. Step-by-step procedure.
+11. Expected observations.
+12. Equations and calculations.
+13. Results.
+14. Conclusion.
+
+After the explanation, show an animated experiment demonstration and provide a button to open the corresponding Virtual Lab setup.
+
+## Video implementation requirements
+
+Build a proper video generation pipeline:
+
+Student input → Topic classification → Structured lesson → Scientific validation → Scene planning → Animation → Narration → Subtitles → Synchronisation → Video preview → MP4 export when supported.
+
+Use actual available rendering technology such as Manim, SVG, Canvas, WebGL, server-side rendering, FFmpeg or available TTS services where the existing environment supports them.
+
+Important distinctions:
+
+- A browser animation is an interactive animation, not automatically an MP4.
+- A video preview is not automatically a downloadable video file.
+- Only show an MP4 download button when a real MP4 file has been successfully generated.
+- If a rendering service is unavailable, provide a working browser animation and explain the limitation.
+- Use real narration and subtitles when the corresponding services are available.
+- Provide English and Kannada support where the required language resources are available.
+- Keep mathematical symbols, formulas, units and scientific terminology accurate.
+
+Include:
+- Video generation progress.
+- Retry after recoverable errors.
+- Preview.
+- Playback controls.
+- Subtitles.
+- Narration controls.
+- Download when actual rendering succeeds.
+- Save generated lessons.
+- Reopen previous lessons.
+
+Do not use fake progress indicators or endless loading screens.
+
+# 3. AI EXPERIMENT CREATOR
+
+Build a complete AI-powered Experiment Creator.
+
+A student should be able to enter a natural-language idea such as:
+
+"I want to investigate how the length of a pendulum changes its time period."
+
+The AI should convert it into a structured experiment specification containing:
+
+- Experiment title.
+- Subject.
+- Research question.
+- Aim.
+- Scientific principle.
+- Hypothesis.
+- Independent variable.
+- Dependent variable.
+- Controlled variables.
+- Required equipment.
+- Equipment purposes.
+- Units.
+- Safe parameter ranges.
+- Experimental procedure.
+- Prediction.
+- Expected observations.
+- Equations.
+- Calculation method.
+- Graph type.
+- Assumptions.
+- Limitations.
+- Safety classification.
+- Supported simulation model.
+
+The student must be able to edit the experiment before running it.
+
+Do not let the application remain indefinitely on "Designing your experiment."
+
+Show actual progress, meaningful errors and recovery options.
+
+If the AI service is unavailable, use an appropriate local experiment template when possible.
+
+Never invent scientific results.
+
+# 4. IMMERSIVE VIRTUAL SCIENCE LABORATORY
+
+This is one of the most important features of OmniLab.
+
+I do not want only a list of predefined experiments or decorative equipment images.
+
+I want an interactive virtual laboratory where students can enter a subject-specific laboratory, select instruments, assemble their own setups, configure equipment, connect instruments and run supported experiments.
+
+## Laboratory environment
+
+Create subject-specific laboratory rooms.
+
+Each room should contain:
+
+- A central experimental workbench.
+- Equipment racks.
+- Shelves.
+- Cabinets.
+- Drawers.
+- Equipment categories.
+- An equipment inspection panel.
+- A setup workspace.
+- A configuration panel.
+- A results and observations area.
+
+The room should feel like a real virtual laboratory.
+
+A polished interactive 2D or 2.5D design is acceptable if full 3D is too expensive or impractical.
+
+Functionality is more important than decorative graphics.
+
+## Equipment interaction
+
+Students must be able to:
+
+- Open equipment racks.
+- Browse equipment.
+- Inspect an instrument.
+- Understand its purpose.
+- Select equipment.
+- Add it to the workbench.
+- Move it.
+- Reposition it.
+- Rotate it where appropriate.
+- Remove it.
+- Configure its settings.
+- Connect compatible equipment.
+- Disconnect equipment.
+- Validate experimental setups.
+- Save custom setups.
+
+Support mouse and drag-and-drop on desktop, and tap-to-add or touch-friendly interactions on mobile.
+
+Equipment must have actual properties and functional behaviour, not just images.
+
+Each instrument should have:
+
+- Equipment ID.
+- Name.
+- Subject.
+- Purpose.
+- Measurement units.
+- Configuration settings.
+- Compatibility rules.
+- Supported simulation models.
+- Safety classification.
+
+## Chemistry Laboratory
+
+Include:
+
+- Beakers.
+- Test tubes.
+- Test tube racks.
+- Conical flasks.
+- Volumetric flasks.
+- Measuring cylinders.
+- Funnels.
+- Watch glasses.
+- Evaporating dishes.
+- Petri dishes.
+- Digital balances.
+- Thermometers.
+- pH meters.
+- Conductivity meters.
+- Pipettes.
+- Droppers.
+- Burettes.
+- Spatulas.
+- Tongs.
+- Stirring rods.
+- Magnetic stirrers.
+- Hot plates.
+- Water baths.
+- Cooling apparatus.
+- Condensers.
+- Filtration equipment.
+- Distillation equipment.
+- Chromatography equipment.
+- Separation funnels.
+- Centrifuges.
+
+## Physics Laboratory
+
+Include:
+
+- Pendulums.
+- Stopwatches.
+- Meter scales.
+- Measuring tapes.
+- Spring balances.
+- Mass sets.
+- Pulleys.
+- Inclined planes.
+- Trolleys.
+- Tracks.
+- Force sensors.
+- Motion sensors.
+- DC power supplies.
+- Switches.
+- Wires.
+- Resistors.
+- Variable resistors.
+- Bulbs.
+- LEDs.
+- Ammeters.
+- Voltmeters.
+- Multimeters.
+- Breadboards.
+- Convex lenses.
+- Concave lenses.
+- Mirrors.
+- Prisms.
+- Optical benches.
+- Light sources.
+- Screens.
+- Ray boxes.
+- Calorimeters.
+- Thermometers.
+- Heat sources.
+- Insulation.
+- Wave generators.
+- Sound sources.
+- Oscilloscopes.
+
+## Biology Laboratory
+
+Include:
+
+- Compound microscopes.
+- Virtual microscope slides.
+- Plant cell models.
+- Animal cell models.
+- Specimen collections.
+- Petri dishes.
+- Plant growth chambers.
+- Measuring cylinders.
+- Balances.
+- Rulers.
+- Thermometers.
+- Leaf models.
+- Root models.
+- Stem models.
+- Photosynthesis experiments.
+- Seed germination experiments.
+- Ecosystem models.
+
+## Environmental Science Laboratory
+
+Include:
+
+- Water-quality simulator.
+- Turbidity meter.
+- pH meter.
+- Temperature sensors.
+- Rain gauges.
+- Wind meters.
+- Soil moisture sensors.
+- Light sensors.
+- Air-quality sensors.
+- Weather stations.
+- Filtration setups.
+- Ecosystem models.
+
+## Engineering and Robotics Laboratory
+
+Include:
+
+- Breadboards.
+- Virtual microcontrollers.
+- Motors.
+- Servos.
+- Wheels.
+- Gears.
+- Levers.
+- Pulleys.
+- Beams.
+- Sensors.
+- LEDs.
+- Switches.
+- Battery models.
+- Robot chassis.
+- Measurement tools.
+- Engineering design workspace.
+
+## Astronomy and Space Laboratory
+
+Include:
+
+- Telescopes.
+- Star maps.
+- Planet models.
+- Solar system.
+- Orbit simulator.
+- Moon phases.
+- Gravity simulator.
+- Spacecraft models.
+- Rocket trajectory visualizer.
+- Satellite models.
+- Light spectrum viewer.
+
+## Mathematics and Measurement Laboratory
+
+Include:
+
+- Graph plotter.
+- Ruler.
+- Protractor.
+- Stopwatch.
+- Calculator.
+- Coordinate plane.
+- Geometry workspace.
+- Unit conversion tools.
+- Statistics tools.
+
+# 5. STUDENT-CREATED EXPERIMENTS
+
+Students must be able to create their own experiments rather than being restricted to ten predefined examples.
+
+The workflow should be:
+
+Create experiment → Select subject → Choose laboratory → Select equipment → Arrange setup → Configure instruments → Define variables → Enter hypothesis → Validate → Run → Observe → Analyse → Save.
+
+Every custom experiment should have:
+
+- Title.
+- Question.
+- Subject.
+- Equipment.
+- Setup configuration.
+- Variables.
+- Hypothesis.
+- Units.
+- Parameter ranges.
+- Scientific model.
+- Safety status.
+- Observations.
+- Calculations.
+- Results.
+- Graphs.
+- Trials.
+- Conclusion.
+
+If an experiment is not supported by a tested scientific model, allow the student to save the conceptual design without fabricating numerical results.
+
+# 6. SCIENTIFIC SIMULATION ENGINE
+
+The AI must not be responsible for inventing numerical scientific outputs.
+
+Use deterministic, tested calculation functions for supported experiments.
+
+Create an expandable model registry.
+
+Each model should define:
+
+- Model ID.
+- Subject.
+- Name.
+- Required equipment.
+- Optional equipment.
+- Input parameters.
+- Input units.
+- Valid ranges.
+- Output values.
+- Output units.
+- Calculation function.
+- Assumptions.
+- Limitations.
+- Safety classification.
+- Model version.
+- Tests.
+
+## Initial ten supported experiments
+
+1. **Boiling point versus pressure**
+
+   Use a validated water saturation-pressure relation or a properly scoped reference dataset.
+
+   Demonstrate why water boils at lower temperatures when atmospheric pressure decreases.
+
+2. **Acid concentration versus pH**
+
+   Use the idealised strong monoprotic acid relationship:
+
+   pH = -log10[H+]
+
+   Clearly explain the ideal-solution approximation.
+
+3. **Temperature versus reaction rate**
+
+   Use the Arrhenius equation:
+
+   k = A × exp(-Ea/RT)
+
+   State the reaction assumptions.
+
+4. **Pendulum length versus time period**
+
+   T = 2π√(L/g)
+
+   Explain the small-angle approximation.
+
+5. **Force versus acceleration**
+
+   a = F/m
+
+   Use a deterministic Newton's second law calculation.
+
+6. **Voltage versus current**
+
+   V = IR
+
+   Show a virtual low-voltage Ohm's law circuit.
+
+7. **Mass versus volume and density**
+
+   Density = mass / volume
+
+   Use an appropriate reference density.
+
+8. **Distance versus light intensity**
+
+   I ∝ 1/r²
+
+   Explain the ideal point-source assumption.
+
+9. **Light intensity versus photosynthesis**
+
+   Use a simplified saturation model:
+
+   P = Pmax × I/(K + I)
+
+   Explain limiting factors.
+
+10. **Newton's law of cooling**
+
+    T(t) = Ta + (T0 - Ta)e^(-kt)
+
+    Explain that the cooling coefficient is model-dependent.
+
+# 7. IMPORTANT LIVE DEMONSTRATIONS
+
+Implement these as polished, functional examples.
+
+## Demonstration A: Water boiling at different pressures
+
+Show two virtual stations:
+
+- Sea-level station.
+- High-altitude station.
+
+Use the same virtual water sample.
+
+Display:
+- Beaker.
+- Virtual heater.
+- Temperature sensor.
+- Pressure indicator.
+- Heating power.
+- Boiling temperature.
+
+Allow students to change pressure and observe the calculated boiling point.
+
+Use valid water saturation-pressure data or equations.
+
+Display comparison tables and graphs.
+
+## Demonstration B: Ohm's law
+
+Create a working virtual electrical setup containing:
+
+- DC power supply.
+- Resistor.
+- Ammeter in series.
+- Voltmeter in parallel.
+- Wires.
+- Switch.
+
+Allow students to change voltage and resistance.
+
+Calculate current using I = V/R.
+
+Show actual readings and a voltage-current graph.
+
+## Demonstration C: Pythagoras theorem
+
+Animate:
+- Right triangle.
+- Three sides.
+- Squares constructed on each side.
+- a² + b² = c².
+- A 3-4-5 example.
+
+## Demonstration D: Binary search
+
+Animate:
+- Input array.
+- Left pointer.
+- Right pointer.
+- Middle pointer.
+- Comparisons.
+- Search interval changes.
+- Final result.
+
+Use a real deterministic algorithm trace.
+
+# 8. WHAT-IF MODE AND ASSUMPTION COMPARISON
+
+Students should be able to challenge scientific assumptions.
+
+Allow them to change conditions such as:
+
+- Gravity.
+- Pressure.
+- Temperature.
+- Mass.
+- Length.
+- Voltage.
+- Resistance.
+- Distance.
+- Light intensity.
+
+Compare:
+
+Original assumptions → Modified assumptions → Original result → Modified result → Explanation.
+
+Clearly distinguish real scientific models from hypothetical conditions.
+
+If the changed conditions go outside the model's valid range, explain why the simulation cannot reliably predict the outcome.
+
+# 9. PREDICTION CHALLENGE
+
+Before running an experiment, ask students what they think will happen.
+
+For example:
+
+"What happens to the pendulum's time period if its length doubles?"
+
+Let students select or write a prediction.
+
+After the simulation:
+
+- Show the actual calculated outcome.
+- Compare the prediction.
+- Explain whether it was correct.
+- Explain the scientific reasoning.
+- Encourage another experiment.
+
+Track prediction accuracy over time without discouraging students.
+
+# 10. AI SCIENCE DETECTIVE
+
+Create an interactive AI tutor that helps students understand mistakes.
+
+It should:
+
+- Identify possible misconceptions.
+- Ask guiding questions.
+- Give hints rather than immediately revealing answers.
+- Provide analogies.
+- Explain scientific reasoning.
+- Suggest another experiment or trial.
+
+Use the actual experiment and result context.
+
+# 11. SCIENTIFIC TRUST AND ACCURACY
+
+This is essential.
+
+AI-generated content must not be presented as verified scientific fact without appropriate validation.
+
+Implement:
+
+- Scientific formulas.
+- Units.
+- Assumptions.
+- Model limitations.
+- Calculation transparency.
+- Source references where verifiable.
+- Clear distinction between simulated and measured observations.
+- Clear distinction between established science and hypothetical scenarios.
+
+Never invent sources or citations.
+
+If no suitable source or tested model is available, communicate uncertainty.
+
+# 12. STUDENT SAFETY GUARDIAN
+
+Every practical experiment must pass a safety assessment before instructions or execution.
+
+Classify experiments into:
+
+- Safe educational simulation.
+- Caution required.
+- Restricted or unsafe.
+
+For unknown chemical combinations, toxic gases, hazardous reactions, dangerous temperatures and unsafe electrical procedures, apply conservative restrictions.
+
+Do not provide dangerous quantities or operational instructions for high-risk experiments.
+
+Keep electrical demonstrations virtual and low-voltage.
+
+Explain why a blocked experiment is unsafe and suggest a safe alternative.
+
+# 13. AI SCIENCE EXPLORER
+
+Create a universal science question interface.
+
+Students can ask questions across all supported STEM subjects.
+
+The system should:
+
+1. Identify the subject.
+2. Understand the question.
+3. Explain it at the student's learning level.
+4. Identify formulas or scientific principles.
+5. Provide relevant diagrams.
+6. Show a relevant educational video or generated animation.
+7. Suggest a supported experiment.
+8. Connect to the Virtual Lab.
+9. Offer a prediction challenge.
+10. Save the learning session.
+
+If the question cannot be matched to an existing simulation, provide a reliable conceptual explanation and clearly state that no tested simulation is currently available.
+
+# 14. AI SCIENCE VIDEO EXPLORER
+
+When a student asks a question, find an appropriate educational video or demonstration if available.
+
+Use legitimate educational sources.
+
+For every video show:
+- Title.
+- Creator or channel.
+- Source.
+- Verified link.
+- Thumbnail when available.
+- Why the video is relevant.
+- Key learning points.
+
+Never invent videos, creators, thumbnails or links.
+
+Respect copyright and embedding restrictions.
+
+If no relevant video is available, use a labelled generated scientific illustration or animation.
+
+Connect videos to relevant Virtual Lab experiments wherever supported.
+
+# 15. MY EXPERIMENTS AND TRIAL MANAGEMENT
+
+Create a complete saved-experiment system.
+
+Include:
+- New experiments.
+- Saved experiments.
+- Draft experiments.
+- Completed experiments.
+- Recent experiments.
+- Saved setups.
+- Previous trials.
+- Results.
+- Reports.
+
+Students should be able to:
+
+- Save.
+- Rename.
+- Edit.
+- Duplicate.
+- Delete with confirmation.
+- Reopen.
+- Continue.
+- Compare.
+- Export.
+
+Preserve experimental settings and results.
+
+Support up to ten independent trials per experiment.
+
+Each trial must record:
+
+- Trial ID.
+- Trial name.
+- Input parameters.
+- Units.
+- Output.
+- Timestamp.
+- Model version.
+- Data type.
+
+Allow students to repeat, rename, compare, delete and export trials.
+
+Do not overwrite earlier trials.
+
+Where appropriate, show statistics such as averages and variation.
+
+# 16. DYNAMIC GRAPHS AND DATA VISUALISATION
+
+Graphs must use actual calculated or recorded experimental data.
+
+Support:
+- Line graphs.
+- Scatter plots.
+- Bar charts.
+- Scientific curves.
+- Comparison graphs.
+
+Include:
+- Axis labels.
+- Units.
+- Legends.
+- Tooltips.
+- Appropriate scales.
+- Trial selection.
+- Original versus modified conditions.
+
+Do not use fake decorative data.
+
+Keep graph and trial panels hidden until the student selects the relevant section.
+
+# 17. GLOBAL INNOVATION HUB
+
+Allow students to submit their own scientific ideas and inventions.
+
+Include:
+
+- Idea title.
+- Problem being solved.
+- Proposed solution.
+- Subject.
+- Description.
+- Optional image or project attachment.
+- Save privately.
+- Request public showcase.
+
+Do not automatically publish student submissions.
+
+Include moderation, approval and privacy controls, particularly for children.
+
+# 18. WORLD DISCOVERIES
+
+Create a science discovery and innovation section.
+
+Show verified scientific discoveries, inventions and developments.
+
+Include:
+- Discovery title.
+- Date.
+- Subject.
+- Research or invention summary.
+- Why it matters.
+- Verified sources.
+- Relevant image or educational video.
+
+Distinguish research findings, prototypes, announcements and confirmed practical applications.
+
+Do not invent dates, statistics or sources.
+
+# 19. RURAL ACCESSIBILITY AND MULTILINGUAL LEARNING
+
+Make OmniLab accessible to students with limited resources.
+
+Requirements:
+
+- Mobile-first responsive design.
+- Low-end device support.
+- Lightweight visual assets.
+- Simple English explanations.
+- Kannada language support.
+- Regional-language expansion where available.
+- Touch-friendly interfaces.
+- Readable typography.
+- Good contrast.
+- Downloadable learning materials where supported.
+- Cached offline lessons where technically supported.
+
+Clearly explain that AI responses, online videos and remote services may require internet access.
+
+Never claim full offline AI functionality unless it is actually implemented.
+
+# 20. TEACHER AND CLASSROOM FEATURES
+
+Add teacher-oriented features where feasible.
+
+Include:
+- Teacher dashboard.
+- Experiment recommendations.
+- Classroom learning activities.
+- Student learning progress.
+- Saved lesson materials.
+- Assignments or challenges.
+- Experiment reports.
+
+Keep student privacy in mind.
+
+# 21. UI AND DESIGN REQUIREMENTS
+
+Maintain a premium futuristic science laboratory identity.
+
+Preferred colours:
+
+- Midnight navy: #07111F.
+- Secondary navy: #0D1B2A.
+- Card background: #12243A.
+- Electric cyan: #35D5F2.
+- Blue: #478BFF.
+- Success green: #35C98A.
+- Amber: #F5B942.
+- Danger coral: #F06A6A.
+- White and blue-grey text.
+
+Use:
+- Clean layouts.
+- Subtle glassmorphism.
+- Scientific illustrations.
+- Consistent spacing.
+- Professional typography.
+- Responsive cards.
+- Clear navigation.
+- Meaningful animations.
+
+Avoid excessive neon effects and unnecessary decoration.
+
+The three-line menu should open and close the sidebar.
+
+Create separate functional pages for the different features.
+
+Do not display every page's content at once.
+
+Only the selected page or tab should be displayed.
+
+Graphs, trials, drawers, modals, dropdowns and accordions should appear only when requested.
+
+Every visible button must perform a real action.
+
+# 22. COMPLETE FUNCTIONALITY AUDIT
+
+Inspect and test every existing section of the application.
+
+Check:
+
+- Dashboard.
+- Navigation.
+- Sidebar.
+- Science Explorer.
+- Question input.
+- Sample questions.
+- AI response.
+- Retry functionality.
+- Video Explorer.
+- Video generation.
+- Video preview.
+- Video download.
+- Virtual Lab.
+- Laboratory rooms.
+- Equipment racks.
+- Equipment selection.
+- Equipment configuration.
+- Equipment connections.
+- Experiment Creator.
+- Experiment validation.
+- Experiment execution.
+- Scientific calculations.
+- Graphs.
+- Trials.
+- Saved Experiments.
+- Science Detective.
+- Safety Guardian.
+- Innovation Hub.
+- World Discoveries.
+- Smart Learning.
+- Theorem-to-Video Generator.
+- Teacher features.
+- Settings.
+- Language selection.
+- Mobile responsiveness.
+- Every modal.
+- Every tab.
+- Every dropdown.
+- Every accordion.
+- Every visible button.
+
+Fix:
+- Broken buttons.
+- Dead navigation.
+- Missing pages.
+- Empty screens.
+- Infinite loading.
+- API failures.
+- Missing dependencies.
+- Incorrect imports.
+- Console errors.
+- Backend errors.
+- Broken video workflows.
+- Incorrect routes.
+- Missing assets.
+- Responsive layout issues.
+
+Do not merely hide error messages.
+
+Find and fix the actual causes.
+
+# 23. AI FAILURE HANDLING
+
+AI services can experience temporary outages, 503 errors, 429 rate limits and quota restrictions.
+
+Implement:
+
+- Appropriate retry logic.
+- Exponential backoff with jitter.
+- Limited retry attempts.
+- Friendly error messages.
+- Retry buttons.
+- Preserved user input.
+- Safe logging.
+- Local deterministic fallbacks where available.
+- Clear status indicators.
+
+Do not expose API keys.
+
+Do not make the entire application unusable when AI services are temporarily unavailable.
+
+Core deterministic simulations should continue working independently of AI.
+
+# 24. TECHNICAL ARCHITECTURE
+
+Work with the existing repository and technology stack.
+
+Inspect the current implementation before making architectural changes.
+
+The project already includes a frontend, backend, server configuration and AI-related services.
+
+Preserve working components and integrations.
+
+Use:
+- Existing React/Vite/TypeScript infrastructure where present.
+- Existing Express backend where present.
+- Existing Gemini integration.
+- Deterministic science calculation functions.
+- Existing algorithm registry and execution logic.
+- Existing Smart Learning services.
+- Existing rendering and video services where functional.
+- Appropriate persistence.
+- Secure environment-variable configuration.
+
+Do not unnecessarily replace working services.
+
+Do not move secret keys into frontend code.
+
+Do not make unverified assumptions about available rendering tools or external APIs.
+
+# 25. DATA PERSISTENCE
+
+Save:
+- Student experiments.
+- Equipment configurations.
+- Experimental parameters.
+- Trial records.
+- Calculated results.
+- Graph data.
+- Notes.
+- Generated lessons.
+- Video metadata.
+- Learning progress.
+
+If a proper database is unavailable, implement a reliable local persistence mechanism appropriate to the environment and clearly document its limitations.
+
+Do not claim cloud synchronisation if it is not implemented.
+
+# 26. IMPLEMENTATION PRIORITY
+
+Because this is a hackathon project, prioritise working functionality over excessive complexity.
+
+**Priority 1 — Essential working product**
+- Existing application builds and runs.
+- AI Science Explorer.
+- AI Experiment Creator.
+- Video phase for supported questions and problems.
+- Virtual Lab with functional equipment.
+- Initial ten deterministic experiments.
+- Ohm's law demonstration.
+- Prediction challenge.
+- Dynamic graphs and trials.
+- Saved experiments.
+- Safety Guardian.
+
+**Priority 2 — Strong learning experience**
+- Universal Smart Learning.
+- Theorem-to-video generation.
+- Practical experiment videos.
+- Biology and Chemistry demonstrations.
+- Algorithm visualisations.
+- What-If mode.
+- Science Detective.
+- Verified educational video search.
+
+**Priority 3 — Extended ecosystem**
+- Innovation Hub.
+- World Discoveries.
+- Teacher dashboard.
+- Additional laboratory equipment.
+- More experiment models.
+- Regional language expansion.
+- Offline learning packs where supported.
+
+# 27. IMPORTANT DEVELOPMENT RULES
+
+1. Work on the existing GitHub-imported project.
+2. Do not create another unrelated application.
+3. Do not delete existing features.
+4. Do not replace real functionality with mockups.
+5. Do not fabricate scientific outputs.
+6. Do not create fake video files or download links.
+7. Do not leave placeholder pages.
+8. Do not create infinite loading states.
+9. Do not claim a feature is complete without testing it.
+10. Do not expose secrets.
+11. Keep the application responsive.
+12. Preserve working functionality during modifications.
+13. Use small, safe implementation steps.
+14. Verify every important change.
+15. Report genuine limitations honestly.
+
+# 28. HOW TO WORK THROUGH THE PROJECT
+
+Do not attempt to make random changes to the entire repository without understanding it.
+
+FIRST:
+- Inspect all existing source files.
+- Understand the frontend.
+- Understand the backend.
+- Identify existing features.
+- Identify what is already implemented.
+- Identify what is broken or incomplete.
+- Check dependencies.
+- Check environment variables.
+- Check the build and runtime.
+
+SECOND:
+- Create a clear implementation checklist.
+- Reuse existing working code.
+- Identify the highest-priority missing functionality.
+- Implement and test each feature.
+
+THIRD:
+- Integrate the universal video phase across supported problems and topics.
+- Connect Smart Learning to the Virtual Lab.
+- Connect Science Explorer to videos and experiments.
+- Connect Experiment Creator to actual scientific models.
+- Connect experiments to prediction, results, graphs and saved trials.
+
+FOURTH:
+- Perform a complete functionality audit.
+- Test mobile responsiveness.
+- Test error recovery.
+- Verify actual video rendering where available.
+- Verify scientific calculations.
+
+FIFTH:
+- Provide a final implementation report.
+
+The report must identify:
+- Features already working.
+- Features newly implemented.
+- Features fixed.
+- Features partially implemented.
+- Features blocked by missing services or quota.
+- Tests actually performed.
+- Remaining tasks.
+
+Do not say everything is complete if it is not.
+
+# FINAL MISSION
+
+Build OmniLab into a complete, interactive AI-powered STEM discovery platform.
+
+Our core educational experience must be:
+
+**ASK ANY QUESTION → UNDERSTAND THE SCIENCE → WATCH THE VIDEO → BUILD THE EXPERIMENT → MAKE A PREDICTION → RUN THE SIMULATION → OBSERVE THE RESULTS → CHALLENGE THE ASSUMPTIONS → DISCOVER SOMETHING NEW.**
+
+Our vision is to make practical, exploratory and meaningful STEM learning accessible to every student, regardless of their access to a physical laboratory.
+
+This project is being developed for STEM FOR IMPACT 2026.
+
+Make the product functional, scientifically trustworthy, innovative, accessible and impressive to demonstrate.
+
+Start by inspecting the existing repository and continue development from the actual codebase.
