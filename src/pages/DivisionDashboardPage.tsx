@@ -4,6 +4,7 @@ import {
   Award,
   BookOpen,
   Compass,
+  Film,
   FlaskConical,
   GraduationCap,
   NotebookPen,
@@ -12,6 +13,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import { useLab } from '../context/LabContext';
+import { AudioNarrationBar } from '../components/ui/AudioNarrationBar';
 import {
   EDUCATION_DIVISIONS,
   HIGHER_EDUCATION_STAGES,
@@ -37,6 +39,7 @@ export function DivisionDashboardPage() {
     savedReports,
     researchNotebookEntries,
     masteredInstrumentIds,
+    setSmartLearningPrefillQuery,
   } = useLab();
 
   const divDef = EDUCATION_DIVISIONS[activeDivision];
@@ -256,7 +259,40 @@ export function DivisionDashboardPage() {
             <NotebookPen className="w-4 h-4 text-violet-700" />
             Research Notebook &amp; Lab Passport
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSmartLearningPrefillQuery(divDef.subjects[0]?.tutorPrompt || divDef.title);
+              navigate('smart-learning');
+            }}
+            className="px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-800 hover:border-emerald-500 flex items-center gap-2 min-h-[44px]"
+          >
+            <Film className="w-4 h-4 text-emerald-700" />
+            Watch Concept Video Lesson
+          </button>
         </div>
+
+        <AudioNarrationBar
+          compact
+          title={`${divDef.shortTitle} Overview`}
+          segments={[
+            { label: divDef.title, text: divDef.description },
+            {
+              label:
+                activeDivision === 'school'
+                  ? activeSchoolInfo.label
+                  : activeDivision === 'higher'
+                    ? activeHigherInfo.label
+                    : activeTrackInfo.label,
+              text:
+                activeDivision === 'school'
+                  ? `${activeSchoolInfo.mathDepth}. ${activeSchoolInfo.guidance}`
+                  : activeDivision === 'higher'
+                    ? `${activeHigherInfo.mathDepth}. ${activeHigherInfo.guidance}`
+                    : `${activeTrackInfo.keyInstruments.join(', ')}. ${activeTrackInfo.empiricalBoundaryNote}`,
+            },
+          ]}
+        />
       </section>
 
       {/* Division Subjects Directory Preview */}

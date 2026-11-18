@@ -30,7 +30,8 @@ import {
   Wrench,
   X,
   Microscope,
-  ArrowRightLeft,
+  History,
+  Lock,
 } from 'lucide-react';
 import { useLab } from '../../context/LabContext';
 import { CHEMISTRY_CHEMICAL_VAULT, getChemicalById } from '../../data/chemicals';
@@ -44,15 +45,37 @@ import {
   LAB_ROOMS,
 } from '../../data/labEquipment';
 import { EXPERIMENTS, interpolateWaterBoilingPoint } from '../../engine/experiments';
+import {
+  buildNumberedInstrumentLabels,
+  deriveExperimentSyncFromWorkbench,
+  evaluateBottleProximity,
+  getBottleDisplayLabel,
+  getContainerCapacity,
+  getShortMaterialName,
+  getVesselCurrentAmount,
+  getVesselLiquidVisual,
+  isReceivingVessel,
+  makePairKey,
+  RECEIVING_CONTAINER_SPECS,
+  SEPARATION_HYSTERESIS_PX,
+  validateTransferAttempt,
+} from '../../engine/chemistryBenchEngine';
 import { getSafetyBadgeMeta } from '../../engine/safetyEngine';
+import {
+  checkInstrumentPlacementCompatibility,
+  searchCentralRegistry,
+} from '../../engine/equipmentRegistry';
+import { validateWorkbenchSetup } from '../../engine/executionEngine';
 import type {
   ChemicalSubstance,
+  ChemistryBenchSyncState,
   ExperimentCalculationResult,
   ExperimentDefinition,
   LabDepartmentId,
   LabInstrument,
   RoomStation,
   SavedLabDesign,
+  TransferHistoryEntry,
   VesselMixtureEntry,
   WorkbenchChemicalItem,
   WorkbenchConnection,
@@ -60,6 +83,13 @@ import type {
 } from '../../types/science';
 import { Modal } from '../ui/Modal';
 import { ChemicalCabinetDrawer } from './ChemicalCabinetDrawer';
+import {
+  type ActivePourPrompt,
+  PourProximityPopup,
+  PourQuantityModal,
+  PourStreamOverlay,
+  TransferHistoryModal,
+} from './ChemicalPourWorkflow';
 import { EquipmentIllustration, type EquipmentSimState } from './EquipmentIllustration';
 import { InlineLabTutorStrip, OscilloscopeBenchPanel, VirtualMicroscopeModal } from './LabSpecialViewers';
 import { WorkbenchDiscoveryBar } from './WorkbenchDiscoveryBar';
@@ -68,6 +98,11 @@ import {
   RESEARCH_TRACK_DETAILS,
   SCHOOL_CLASS_LEVELS,
 } from '../../data/divisions';
+
+export interface BenchCommandRequest {
+  id: number;
+  type: 'add-missing-kit' | 'auto-wire';
+}
 
 interface VirtualLabRoomProps {
   experiment: ExperimentDefinition;
@@ -79,6 +114,9 @@ interface VirtualLabRoomProps {
   onOpenBoilingAltitudeDemo: () => void;
   onExitToCampus: () => void;
   trialsCount: number;
+  onChemistryBenchSync?: (sync: ChemistryBenchSyncState) => void;
+  onWorkbenchStateChange?: (items: WorkbenchItem[], connections: WorkbenchConnection[]) => void;
+  benchCommand?: BenchCommandRequest | null;
 }
 
 const CONNECTION_COLORS: Record<WorkbenchConnection['connectionType'], string> = {
@@ -131,15 +169,21 @@ export function VirtualLabRoom({
   onOpenBoilingAltitudeDemo,
   onExitToCampus,
   trialsCount,
+  onChemistryBenchSync,
+  onWorkbenchStateChange,
+  benchCommand,
 }: VirtualLabRoomProps) {
   const {
     activeDepartment,
     setActiveDepartment,
+    activeChemistryBench,
+    setActiveChemistryBench,
     activeDivision,
     schoolClassLevel,
     higherStage,
     researchTrack,
     language,
+    reducedMotion,
     setCreatorPrefillPrompt,
     navigate,
     recentEquipmentIds,
@@ -148,7 +192,17 @@ export function VirtualLabRoom({
     savedLabDesigns,
     workbenchHandoff,
     setWorkbenchHandoff,
+    personalLabs,
+    updatePersonalLabWorkspace,
   } = useLab();
+
+  const [sessionPersonalLabId, setSessionPersonalLabId] = useState<string | null>(null);
+  const [drawerScopeAllWings, setDrawerScopeAllWings] = useState<boolean>(false);
+  const isPersonalLabSession = Boolean(sessionPersonalLabId);
+  const activePersonalLab = useMemo(
+    () => (sessionPersonalLabId ? personalLabs.find((p) => p.id === sessionPersonalLabId) ?? null : null),
+    [sessionPersonalLabId, personalLabs]
+  );
 
   const currentLevelLabel = useMemo(() => {
     if (activeDivision === 'school') {
@@ -162,32 +216,65 @@ export function VirtualLabRoom({
 
   const room = useMemo(() => getLabRoomById(activeDepartment), [activeDepartment]);
 
+  const shouldRestoreChemistrySnapshot = Boolean(
+    !workbenchHandoff &&
+      activeDepartment === 'chemistry' &&
+      activeChemistryBench &&
+      activeChemistryBench.experimentId === experiment.id
+  );
+
   const [workbenchItems, setWorkbenchItems] = useState<WorkbenchItem[]>(() => {
+    if (shouldRestoreChemistrySnapshot && activeChemistryBench) {
+      return activeChemistryBench.workbenchItems;
+    }
     const kit = getRecommendedKitForExperiment(experiment.id);
     if (kit.department !== activeDepartment) return [];
     return kit.defaultItems.map((item) => ({ ...item, instanceId: createInstanceId('inst') }));
   });
 
   const [chemicalItems, setChemicalItems] = useState<WorkbenchChemicalItem[]>(() => {
+    if (shouldRestoreChemistrySnapshot && activeChemistryBench) {
+      return activeChemistryBench.chemicalItems;
+    }
     const kit = getRecommendedKitForExperiment(experiment.id);
     if (kit.department !== 'chemistry' || activeDepartment !== 'chemistry' || !kit.chemicalIds) {
       return [];
     }
-    return kit.chemicalIds.map((cId, idx) => ({
-      instanceId: createInstanceId('chem'),
-      chemicalId: cId,
-      xPercent: 18 + idx * 14,
-      yPercent: 72,
-      amount: 100,
-      unit: 'mL',
-    }));
+    return kit.chemicalIds
+      .map((cId, idx) => {
+        const sub = getChemicalById(cId);
+        if (!sub) return null;
+        const initAmt = sub.stateAtRoomTemp === 'Solid' ? 10 : 100;
+        return {
+          instanceId: createInstanceId('chem'),
+          chemicalId: sub.id,
+          xPercent: Math.min(86, 18 + idx * 14),
+          yPercent: 72,
+          amount: initAmt,
+          capacity: initAmt,
+          unit: sub.stateAtRoomTemp === 'Solid' ? 'g' : 'mL',
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
   });
 
-  const [vesselMixtures, setVesselMixtures] = useState<VesselMixtureEntry[]>([]);
-  const [transferAmount, setTransferAmount] = useState<number>(25);
+  const [vesselMixtures, setVesselMixtures] = useState<VesselMixtureEntry[]>(() =>
+    shouldRestoreChemistrySnapshot && activeChemistryBench
+      ? activeChemistryBench.vesselMixtures
+      : []
+  );
+  const [transferHistory, setTransferHistory] = useState<TransferHistoryEntry[]>(() =>
+    shouldRestoreChemistrySnapshot && activeChemistryBench
+      ? activeChemistryBench.transferHistory
+      : []
+  );
+  const [historyModalOpen, setHistoryModalOpen] = useState<boolean>(false);
   const [microscopeOpen, setMicroscopeOpen] = useState<boolean>(false);
 
   const [connections, setConnections] = useState<WorkbenchConnection[]>(() => {
+    if (shouldRestoreChemistrySnapshot && activeChemistryBench) {
+      return activeChemistryBench.connections;
+    }
     const kit = getRecommendedKitForExperiment(experiment.id);
     if (kit.department !== activeDepartment) return [];
     const created = kit.defaultItems.map((item) => ({ ...item, instanceId: createInstanceId('inst') }));
@@ -222,12 +309,72 @@ export function VirtualLabRoom({
   const [designTitleInput, setDesignTitleInput] = useState('');
   const [designNotesInput, setDesignNotesInput] = useState('');
 
-  // Pointer drag state for repositioning placed items on center workbench
+  // Pointer drag state with Pointer Capture & Proximity Pour Workflow
   const benchRef = useRef<HTMLDivElement | null>(null);
   const [draggingId, setDraggingId] = useState<{ kind: 'inst' | 'chem'; id: string } | null>(null);
+  const dragMetaRef = useRef<{
+    kind: 'inst' | 'chem';
+    id: string;
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    didMove: boolean;
+    latestXPct?: number;
+    latestYPct?: number;
+  } | null>(null);
 
-  const loadChemicalSamples = (chemIds: string[] = [], dept: LabDepartmentId) => {
-    if (dept !== 'chemistry' || chemIds.length === 0) {
+  const suppressedPairsRef = useRef<Set<string>>(new Set());
+  const [activePourPrompt, setActivePourPrompt] = useState<ActivePourPrompt | null>(null);
+  const [quantityModalTarget, setQuantityModalTarget] = useState<{
+    sourceId: string;
+    targetId: string;
+  } | null>(null);
+  const [incompatibleFeedback, setIncompatibleFeedback] = useState<{
+    message: string;
+    xPercent: number;
+    yPercent: number;
+  } | null>(null);
+
+  interface PourAnimationState {
+    sourceId: string;
+    targetId: string;
+    phase: 'approaching' | 'tilting' | 'pouring' | 'returning';
+    progress01: number;
+    bottleX: number;
+    bottleY: number;
+    bottleTiltDeg: number;
+    spoutX: number;
+    spoutY: number;
+    destMouthX: number;
+    destMouthY: number;
+    colorHex: string;
+    isSolid: boolean;
+    startBottleAmt: number;
+    endBottleAmt: number;
+    bottleCap: number;
+    startDestAmt: number;
+    endDestAmt: number;
+    destCapacity: number;
+  }
+
+  const [pourAnimation, setPourAnimation] = useState<PourAnimationState | null>(null);
+  const pourRafRef = useRef<number | null>(null);
+
+  const lockedObjectIds = useMemo(() => {
+    const set = new Set<string>();
+    if (pourAnimation) {
+      set.add(pourAnimation.sourceId);
+      set.add(pourAnimation.targetId);
+    }
+    return set;
+  }, [pourAnimation]);
+
+  const loadChemicalSamples = (
+    chemIds: string[] = [],
+    dept: LabDepartmentId,
+    forceAllow = false
+  ) => {
+    if ((dept !== 'chemistry' && !forceAllow) || chemIds.length === 0) {
       setChemicalItems([]);
       return;
     }
@@ -235,16 +382,18 @@ export function VirtualLabRoom({
       .map((cId, idx) => {
         const sub = getChemicalById(cId);
         if (!sub) return null;
+        const initAmt = sub.stateAtRoomTemp === 'Solid' ? 10 : 100;
         return {
           instanceId: createInstanceId('chem'),
           chemicalId: sub.id,
           xPercent: Math.min(84, 18 + idx * 14),
           yPercent: 72,
-          amount: sub.stateAtRoomTemp === 'Solid' ? 10 : 100,
+          amount: initAmt,
+          capacity: initAmt,
           unit: sub.stateAtRoomTemp === 'Solid' ? 'g' : 'mL',
         };
       })
-      .filter((x): x is WorkbenchChemicalItem => x !== null);
+      .filter((x): x is NonNullable<typeof x> => x !== null);
     setChemicalItems(items);
   };
 
@@ -257,6 +406,11 @@ export function VirtualLabRoom({
     setConnections(buildDefaultConnections(items, kit.connectionPairs));
     loadChemicalSamples(kit.chemicalIds, kit.department);
     setVesselMixtures([]);
+    setTransferHistory([]);
+    setActivePourPrompt(null);
+    setQuantityModalTarget(null);
+    setIncompatibleFeedback(null);
+    suppressedPairsRef.current.clear();
     setSelectedInstanceId(items[0]?.instanceId ?? null);
     setSelectedChemicalInstanceId(null);
     setConnectingFromId(null);
@@ -279,18 +433,30 @@ export function VirtualLabRoom({
     }
   }, [experiment.id, workbenchHandoff]);
 
-  // Handle handoff from Catalog, Experiment Creator, Campus Lobby, or Saved Designs
+  // Handle handoff from Catalog, Experiment Creator, Campus Lobby, Personal Lab, or Saved Designs
   useEffect(() => {
     if (!workbenchHandoff) return;
 
     if (workbenchHandoff.savedDesignId) {
+      setSessionPersonalLabId(null);
       const found = savedLabDesigns.find((d) => d.id === workbenchHandoff.savedDesignId);
       if (found) {
         setActiveDepartment(found.department);
         onSelectExperiment(found.experimentId);
+        prevExpIdRef.current = found.experimentId;
         setWorkbenchItems(found.workbenchItems);
-        setChemicalItems(found.chemicalItems ?? []);
+        setChemicalItems(
+          (found.chemicalItems ?? []).map((c) => ({
+            ...c,
+            capacity: c.capacity ?? (c.unit === 'g' ? Math.max(10, c.amount) : Math.max(100, c.amount)),
+          }))
+        );
+        setVesselMixtures(found.vesselMixtures ?? []);
+        setTransferHistory(found.transferHistory ?? []);
         setConnections(found.connections);
+        setActivePourPrompt(null);
+        setQuantityModalTarget(null);
+        suppressedPairsRef.current.clear();
         Object.entries(found.parameters).forEach(([k, v]) => onParamChange(k, v));
         setSelectedInstanceId(found.workbenchItems[0]?.instanceId ?? null);
         setStatusNotice({
@@ -308,6 +474,35 @@ export function VirtualLabRoom({
       onSelectExperiment(workbenchHandoff.experimentId);
       prevExpIdRef.current = workbenchHandoff.experimentId;
     }
+
+    if (workbenchHandoff.personalLabId) {
+      setSessionPersonalLabId(workbenchHandoff.personalLabId);
+      setDrawerScopeAllWings(true);
+      const exactItems = workbenchHandoff.workbenchItems ?? [];
+      setWorkbenchItems(exactItems);
+      setConnections([]);
+      setVesselMixtures([]);
+      setTransferHistory([]);
+      loadChemicalSamples(workbenchHandoff.chemicalIds ?? [], targetDept, true);
+      exactItems.forEach((item) => {
+        Object.entries(item.config).forEach(([k, v]) => {
+          if (typeof v === 'number' && Number.isFinite(v)) {
+            onParamChange(k, v);
+          }
+        });
+      });
+      setSelectedInstanceId(exactItems[0]?.instanceId ?? null);
+      setSelectedChemicalInstanceId(null);
+      setStatusNotice({
+        type: 'success',
+        text: `Entered Personal Laboratory (${exactItems.length} placed apparatus, ${(workbenchHandoff.chemicalIds ?? []).length} reagents). Cross-wing equipment enabled & auto-saved.`,
+      });
+      setWorkbenchHandoff(null);
+      return;
+    }
+
+    setSessionPersonalLabId(null);
+    setDrawerScopeAllWings(false);
 
     if (workbenchHandoff.equipmentIds && workbenchHandoff.equipmentIds.length > 0) {
       const placed: WorkbenchItem[] = workbenchHandoff.equipmentIds
@@ -355,6 +550,175 @@ export function VirtualLabRoom({
     setWorkbenchHandoff(null);
   }, [workbenchHandoff]);
 
+  // Report live bench items & connections up to VirtualLabPage
+  useEffect(() => {
+    onWorkbenchStateChange?.(workbenchItems, connections);
+  }, [workbenchItems, connections, onWorkbenchStateChange]);
+
+  // Auto-persist changes back to active Personal Lab workspace in localStorage
+  useEffect(() => {
+    if (!sessionPersonalLabId || workbenchHandoff) return;
+    updatePersonalLabWorkspace(sessionPersonalLabId, {
+      workbenchItems,
+      chemicalIds: Array.from(new Set(chemicalItems.map((c) => c.chemicalId))),
+      activeExperimentId: experiment.id,
+      department: room.id,
+    });
+  }, [
+    sessionPersonalLabId,
+    workbenchHandoff,
+    workbenchItems,
+    chemicalItems,
+    experiment.id,
+    room.id,
+    updatePersonalLabWorkspace,
+  ]);
+
+  // Sync top experiment parameter sliders back onto placed instrument configurations
+  useEffect(() => {
+    setWorkbenchItems((prev) => {
+      let changed = false;
+      const next = prev.map((w) => {
+        let itemChanged = false;
+        const nextCfg = { ...w.config };
+        for (const k of Object.keys(nextCfg)) {
+          const pVal = params[k];
+          if (typeof pVal === 'number' && Number.isFinite(pVal) && Math.abs(nextCfg[k] - pVal) > 1e-6) {
+            nextCfg[k] = pVal;
+            itemChanged = true;
+          }
+        }
+        if (itemChanged) {
+          changed = true;
+          return { ...w, config: nextCfg };
+        }
+        return w;
+      });
+      return changed ? next : prev;
+    });
+  }, [params]);
+
+  // Execute imperative commands triggered from VirtualLabPage Readiness Bar
+  const lastBenchCmdIdRef = useRef<number>(0);
+  useEffect(() => {
+    if (!benchCommand || benchCommand.id === lastBenchCmdIdRef.current) return;
+    lastBenchCmdIdRef.current = benchCommand.id;
+
+    if (benchCommand.type === 'add-missing-kit') {
+      const validation = validateWorkbenchSetup({
+        experimentId: experiment.id,
+        params,
+        workbenchItems,
+        connections,
+      });
+      const kit = getRecommendedKitForExperiment(experiment.id);
+      const idsToAdd =
+        validation.missingEquipmentIds.length > 0
+          ? validation.missingEquipmentIds
+          : kit.defaultItems.map((d) => d.instrumentId);
+
+      const newItems: WorkbenchItem[] = [];
+      const existingInstIds = new Set(workbenchItems.map((w) => w.instrumentId));
+      idsToAdd.forEach((id, idx) => {
+        if (existingInstIds.has(id)) return;
+        const inst = getInstrumentById(id);
+        if (!inst) return;
+        const kitTemplate = kit.defaultItems.find((d) => d.instrumentId === id);
+        const cfg: Record<string, number> = {};
+        inst.configurations.forEach((c) => {
+          cfg[c.key] = params[c.key] ?? c.defaultValue;
+        });
+        const totalIdx = workbenchItems.length + idx;
+        newItems.push({
+          instanceId: createInstanceId('inst'),
+          instrumentId: inst.id,
+          xPercent: kitTemplate?.xPercent ?? Math.min(84, 20 + (totalIdx % 4) * 19),
+          yPercent: kitTemplate?.yPercent ?? Math.min(78, 34 + Math.floor(totalIdx / 4) * 22),
+          rotationDeg: 0,
+          config: cfg,
+        });
+        existingInstIds.add(id);
+      });
+
+      const mergedItems = [...workbenchItems, ...newItems];
+      const nextConns = [...connections];
+      for (let i = 0; i < mergedItems.length; i++) {
+        for (let j = i + 1; j < mergedItems.length; j++) {
+          const a = mergedItems[i];
+          const b = mergedItems[j];
+          const already = nextConns.some(
+            (c) =>
+              (c.fromInstanceId === a.instanceId && c.toInstanceId === b.instanceId) ||
+              (c.fromInstanceId === b.instanceId && c.toInstanceId === a.instanceId)
+          );
+          if (already) continue;
+          const aInst = getInstrumentById(a.instrumentId);
+          const bInst = getInstrumentById(b.instrumentId);
+          if (!aInst || !bInst) continue;
+          const check = checkInstrumentConnection(aInst, bInst);
+          if (check.valid) {
+            nextConns.push({
+              id: `conn-auto-${Date.now()}-${i}-${j}`,
+              fromInstanceId: a.instanceId,
+              toInstanceId: b.instanceId,
+              connectionType: check.connectionType,
+              valid: true,
+              note: check.note,
+            });
+          }
+        }
+      }
+      setWorkbenchItems(mergedItems);
+      setConnections(nextConns);
+      if (newItems[0]) setSelectedInstanceId(newItems[0].instanceId);
+      setStatusNotice({
+        type: 'success',
+        text: `Added ${newItems.length} missing apparatus item(s) and wired compatible couplings for ${experiment.shortTitle}.`,
+      });
+    } else if (benchCommand.type === 'auto-wire') {
+      const nextConns = [...connections];
+      let addedCount = 0;
+      for (let i = 0; i < workbenchItems.length; i++) {
+        for (let j = i + 1; j < workbenchItems.length; j++) {
+          const a = workbenchItems[i];
+          const b = workbenchItems[j];
+          const already = nextConns.some(
+            (c) =>
+              (c.fromInstanceId === a.instanceId && c.toInstanceId === b.instanceId) ||
+              (c.fromInstanceId === b.instanceId && c.toInstanceId === a.instanceId)
+          );
+          if (already) continue;
+          const aInst = getInstrumentById(a.instrumentId);
+          const bInst = getInstrumentById(b.instrumentId);
+          if (!aInst || !bInst) continue;
+          const check = checkInstrumentConnection(aInst, bInst);
+          if (check.valid) {
+            nextConns.push({
+              id: `conn-auto-${Date.now()}-${i}-${j}`,
+              fromInstanceId: a.instanceId,
+              toInstanceId: b.instanceId,
+              connectionType: check.connectionType,
+              valid: true,
+              note: check.note,
+            });
+            addedCount++;
+          }
+        }
+      }
+      setConnections(nextConns);
+      setStatusNotice({
+        type: addedCount > 0 ? 'success' : 'info',
+        text:
+          addedCount > 0
+            ? `Auto-wired ${addedCount} valid apparatus connection(s) on the workbench.`
+            : 'All compatible placed instruments are already coupled.',
+      });
+    }
+  }, [benchCommand, experiment.id, experiment.shortTitle, params, workbenchItems, connections]);
+
+  const chemistryEnabled =
+    room.id === 'chemistry' || isPersonalLabSession || chemicalItems.length > 0;
+
   // Thermal & harmonic simulation tick
   const targetBoilingC = useMemo(
     () => interpolateWaterBoilingPoint(params.pressure ?? 101.325),
@@ -369,7 +733,7 @@ export function VirtualLabRoom({
   }, [workbenchItems]);
 
   const chemOutcome = useMemo(() => {
-    if (room.id !== 'chemistry') return null;
+    if (!chemistryEnabled) return null;
     const heatableIds = new Set(['chem-beaker', 'chem-test-tubes', 'chem-conical-flask', 'chem-crucible']);
     const vessels = workbenchItems.filter((w) => heatableIds.has(w.instrumentId));
     const heaters = workbenchItems.filter(
@@ -407,15 +771,13 @@ export function VirtualLabRoom({
       );
 
     const reagentAmountsMl: Record<string, number> = {};
-    if (vesselMixtures.length > 0) {
-      vesselMixtures.forEach((m) => {
+    const pouredSubstances = new Set<string>();
+    vesselMixtures.forEach((m) => {
+      if (m.amountMlOrG > 0) {
         reagentAmountsMl[m.chemicalId] = (reagentAmountsMl[m.chemicalId] ?? 0) + m.amountMlOrG;
-      });
-    } else {
-      chemicalItems.forEach((c) => {
-        reagentAmountsMl[c.chemicalId] = (reagentAmountsMl[c.chemicalId] ?? 0) + Math.min(25, c.amount);
-      });
-    }
+        pouredSubstances.add(m.chemicalId);
+      }
+    });
 
     return evaluateBenchChemistryInteraction({
       vesselInstrumentIds: vessels.map((v) => v.instrumentId),
@@ -423,18 +785,47 @@ export function VirtualLabRoom({
       heaterNearVessel,
       heaterPowerW,
       condenserLinked,
-      substanceIds: Array.from(
-        new Set([
-          ...chemicalItems.map((c) => c.chemicalId),
-          ...vesselMixtures.map((m) => m.chemicalId),
-        ])
-      ),
+      substanceIds: Array.from(pouredSubstances),
       reagentAmountsMl,
       pressureKpa: params.pressure ?? 101.325,
       liveTempC: liveWaterTempC,
       isRunning,
     });
-  }, [room.id, workbenchItems, connections, chemicalItems, vesselMixtures, params.pressure, liveWaterTempC, isRunning, heaterPowerW]);
+  }, [chemistryEnabled, workbenchItems, connections, vesselMixtures, params.pressure, liveWaterTempC, isRunning, heaterPowerW]);
+
+  // Persist active Chemistry bench & sync derived parameters to VirtualLabPage
+  useEffect(() => {
+    if (!chemistryEnabled) return;
+    setActiveChemistryBench({
+      experimentId: experiment.id,
+      workbenchItems,
+      chemicalItems,
+      vesselMixtures,
+      connections,
+      transferHistory,
+      updatedAt: new Date().toISOString(),
+    });
+    if (onChemistryBenchSync) {
+      onChemistryBenchSync(
+        deriveExperimentSyncFromWorkbench({
+          experimentId: experiment.id,
+          workbenchItems,
+          vesselMixtures,
+          connections,
+          currentParams: params,
+        })
+      );
+    }
+  }, [chemistryEnabled, experiment.id, workbenchItems, chemicalItems, vesselMixtures, connections, transferHistory]);
+
+  // Cleanup animation frame on unmount
+  useEffect(() => {
+    return () => {
+      if (pourRafRef.current !== null) {
+        cancelAnimationFrame(pourRafRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (chemOutcome?.blocked && isRunning) {
@@ -507,13 +898,7 @@ export function VirtualLabRoom({
     xPercent = 24 + (workbenchItems.length % 4) * 18,
     yPercent = 36 + Math.floor(workbenchItems.length / 4) * 22
   ) => {
-    if (inst.department !== room.id) {
-      setStatusNotice({
-        type: 'warning',
-        text: `${inst.name} belongs inside the ${getLabRoomById(inst.department).shortName}, not ${room.shortName}.`,
-      });
-      return;
-    }
+    const warnings = checkInstrumentPlacementCompatibility(inst, workbenchItems);
 
     const clampedX = Math.min(86, Math.max(14, xPercent));
     const clampedY = Math.min(80, Math.max(20, yPercent));
@@ -535,27 +920,41 @@ export function VirtualLabRoom({
     setSelectedInstanceId(newItem.instanceId);
     setSelectedChemicalInstanceId(null);
     recordRecentEquipment(inst.id);
-    setStatusNotice({
-      type: 'success',
-      text: `Placed ${inst.name} on the ${room.shortName} island workbench.`,
-    });
+    if (warnings.length > 0) {
+      setStatusNotice({
+        type: 'warning',
+        text: `Placed ${inst.name}. Advisory: ${warnings[0].message}`,
+      });
+    } else if (inst.department !== room.id) {
+      setStatusNotice({
+        type: 'info',
+        text: `Placed cross-wing apparatus ${inst.name} (${getLabRoomById(inst.department).shortName}) onto workbench.`,
+      });
+    } else {
+      setStatusNotice({
+        type: 'success',
+        text: `Placed ${inst.name} on the ${room.shortName} island workbench.`,
+      });
+    }
   };
 
   const addChemicalToBench = (chem: ChemicalSubstance) => {
-    if (room.id !== 'chemistry') {
+    if (!chemistryEnabled) {
       setStatusNotice({
         type: 'warning',
-        text: 'Chemical bottles are stored exclusively in the Chemistry Lab Chemical Vault.',
+        text: 'Switch to Chemistry Lab or open a Personal Lab to place reagent bottles here.',
       });
       return;
     }
     const offset = chemicalItems.length;
+    const initAmt = chem.stateAtRoomTemp === 'Solid' ? 10 : 100;
     const item: WorkbenchChemicalItem = {
       instanceId: createInstanceId('chem'),
       chemicalId: chem.id,
       xPercent: Math.min(86, 18 + (offset % 5) * 14),
       yPercent: 74,
-      amount: chem.stateAtRoomTemp === 'Solid' ? 10 : 100,
+      amount: initAmt,
+      capacity: initAmt,
       unit: chem.stateAtRoomTemp === 'Solid' ? 'g' : 'mL',
     };
     setChemicalItems((prev) => [...prev, item]);
@@ -563,7 +962,7 @@ export function VirtualLabRoom({
     setSelectedInstanceId(null);
     setStatusNotice({
       type: 'success',
-      text: `Placed virtual reagent bottle "${chem.name} (${chem.symbol})" on the Chemistry workbench.`,
+      text: `Placed ${getBottleDisplayLabel(item, chem)} (${chem.symbol}) on the bench. Drag it beside or over a container to pour.`,
     });
   };
 
@@ -579,24 +978,264 @@ export function VirtualLabRoom({
     addInstrumentToBench(inst, xPct, yPct);
   };
 
-  const handleBenchPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!draggingId || !benchRef.current) return;
-    const rect = benchRef.current.getBoundingClientRect();
-    const xPct = Math.min(88, Math.max(12, ((e.clientX - rect.left) / rect.width) * 100));
-    const yPct = Math.min(84, Math.max(18, ((e.clientY - rect.top) / rect.height) * 100));
+  const numberedLabels = useMemo(
+    () => buildNumberedInstrumentLabels(workbenchItems),
+    [workbenchItems]
+  );
 
-    if (draggingId.kind === 'inst') {
+  // Live hover proximity feedback while dragging a chemical bottle
+  const activeDragProximity = useMemo(() => {
+    if (!chemistryEnabled || !draggingId || draggingId.kind !== 'chem') return null;
+    const bottle = chemicalItems.find((c) => c.instanceId === draggingId.id);
+    if (!bottle) return null;
+    const rect = benchRef.current?.getBoundingClientRect();
+    return evaluateBottleProximity({
+      sourceBottle: bottle,
+      workbenchItems,
+      otherBottles: chemicalItems,
+      vesselMixtures,
+      benchWidthPx: rect?.width ?? 760,
+      benchHeightPx: rect?.height ?? 440,
+    });
+  }, [chemistryEnabled, draggingId, chemicalItems, workbenchItems, vesselMixtures]);
+
+  const evaluateAndTriggerProximity = (
+    movedKind: 'inst' | 'chem',
+    movedId: string,
+    latestChemItems: WorkbenchChemicalItem[] = chemicalItems,
+    latestWorkbenchItems: WorkbenchItem[] = workbenchItems
+  ) => {
+    if (!chemistryEnabled) return;
+    const rect = benchRef.current?.getBoundingClientRect();
+    const benchW = rect?.width ?? 760;
+    const benchH = rect?.height ?? 440;
+
+    if (movedKind === 'chem') {
+      const bottle = latestChemItems.find((c) => c.instanceId === movedId);
+      if (!bottle || lockedObjectIds.has(bottle.instanceId)) return;
+
+      const evalRes = evaluateBottleProximity({
+        sourceBottle: bottle,
+        workbenchItems: latestWorkbenchItems,
+        otherBottles: latestChemItems,
+        vesselMixtures,
+        benchWidthPx: benchW,
+        benchHeightPx: benchH,
+      });
+
+      // Clear hysteresis suppression for pairs that have moved sufficiently far apart
+      for (const key of Array.from(suppressedPairsRef.current)) {
+        if (key.startsWith(`${bottle.instanceId}::`)) {
+          const dist = evalRes.allDistancesByPairKey[key];
+          if (dist === undefined || dist > SEPARATION_HYSTERESIS_PX) {
+            suppressedPairsRef.current.delete(key);
+          }
+        }
+      }
+
+      const unsuppressed = evalRes.compatibleTargets.filter(
+        (t) =>
+          !suppressedPairsRef.current.has(makePairKey(bottle.instanceId, t.targetInstanceId)) &&
+          !lockedObjectIds.has(t.targetInstanceId)
+      );
+
+      if (unsuppressed.length > 0) {
+        setIncompatibleFeedback(null);
+        setActivePourPrompt({
+          sourceInstanceId: bottle.instanceId,
+          candidates: unsuppressed,
+          selectedTargetId: unsuppressed.length === 1 ? unsuppressed[0].targetInstanceId : null,
+          anchorXPercent: bottle.xPercent,
+          anchorYPercent: bottle.yPercent,
+        });
+      } else {
+        // Close prompt if bottle moved away from currently prompted source
+        setActivePourPrompt((prev) =>
+          prev?.sourceInstanceId === bottle.instanceId ? null : prev
+        );
+        if (evalRes.compatibleTargets.length === 0 && evalRes.incompatibleNearest) {
+          setIncompatibleFeedback({
+            message:
+              evalRes.incompatibleNearest.incompatibilityReason ||
+              'Target cannot receive poured chemicals.',
+            xPercent: bottle.xPercent,
+            yPercent: bottle.yPercent,
+          });
+        } else {
+          setIncompatibleFeedback(null);
+        }
+      }
+      return;
+    }
+
+    // If a receiving container itself was moved near a bottle, check hysteresis & nearby bottles
+    for (const bottle of latestChemItems) {
+      if (lockedObjectIds.has(bottle.instanceId)) continue;
+      const evalRes = evaluateBottleProximity({
+        sourceBottle: bottle,
+        workbenchItems: latestWorkbenchItems,
+        otherBottles: latestChemItems,
+        vesselMixtures,
+        benchWidthPx: benchW,
+        benchHeightPx: benchH,
+      });
+      const pairKey = makePairKey(bottle.instanceId, movedId);
+      const dist = evalRes.allDistancesByPairKey[pairKey];
+      if (dist !== undefined && dist > SEPARATION_HYSTERESIS_PX) {
+        suppressedPairsRef.current.delete(pairKey);
+      }
+      const match = evalRes.compatibleTargets.find(
+        (t) =>
+          t.targetInstanceId === movedId &&
+          !suppressedPairsRef.current.has(pairKey) &&
+          !lockedObjectIds.has(movedId)
+      );
+      if (match) {
+        const unsuppressed = evalRes.compatibleTargets.filter(
+          (t) => !suppressedPairsRef.current.has(makePairKey(bottle.instanceId, t.targetInstanceId))
+        );
+        setIncompatibleFeedback(null);
+        setActivePourPrompt({
+          sourceInstanceId: bottle.instanceId,
+          candidates: unsuppressed,
+          selectedTargetId: unsuppressed.length === 1 ? unsuppressed[0].targetInstanceId : null,
+          anchorXPercent: bottle.xPercent,
+          anchorYPercent: bottle.yPercent,
+        });
+        break;
+      }
+    }
+  };
+
+  const handleObjectPointerDown = (
+    e: React.PointerEvent<HTMLDivElement>,
+    kind: 'inst' | 'chem',
+    id: string
+  ) => {
+    e.stopPropagation();
+    if (lockedObjectIds.has(id)) {
+      setStatusNotice({
+        type: 'warning',
+        text: 'Transfer animation in progress. Wait until pouring completes before moving locked containers.',
+      });
+      return;
+    }
+    if (kind === 'inst' && connectingFromId) {
+      const item = workbenchItems.find((w) => w.instanceId === id);
+      if (item) handleItemClick(item);
+      return;
+    }
+
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Synthetic pointer events in tests may not support capture
+    }
+
+    dragMetaRef.current = {
+      kind,
+      id,
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      didMove: false,
+    };
+    setDraggingId({ kind, id });
+    setIncompatibleFeedback(null);
+
+    if (kind === 'inst') {
+      setSelectedInstanceId(id);
+      setSelectedChemicalInstanceId(null);
+    } else {
+      setSelectedChemicalInstanceId(id);
+      setSelectedInstanceId(null);
+      setActivePourPrompt(null);
+    }
+  };
+
+  const handleObjectPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const meta = dragMetaRef.current;
+    if (!meta || !benchRef.current) return;
+    if (e.pointerId !== meta.pointerId && e.pointerId !== 0) return;
+
+    const dx = e.clientX - meta.startClientX;
+    const dy = e.clientY - meta.startClientY;
+    if (!meta.didMove && Math.hypot(dx, dy) >= 4) {
+      meta.didMove = true;
+    }
+    if (!meta.didMove) return;
+
+    const rect = benchRef.current.getBoundingClientRect();
+    const xPct = Math.min(90, Math.max(10, ((e.clientX - rect.left) / rect.width) * 100));
+    const yPct = Math.min(84, Math.max(18, ((e.clientY - rect.top) / rect.height) * 100));
+    meta.latestXPct = xPct;
+    meta.latestYPct = yPct;
+
+    if (meta.kind === 'inst') {
       setWorkbenchItems((prev) =>
         prev.map((item) =>
-          item.instanceId === draggingId.id ? { ...item, xPercent: xPct, yPercent: yPct } : item
+          item.instanceId === meta.id ? { ...item, xPercent: xPct, yPercent: yPct } : item
         )
       );
     } else {
       setChemicalItems((prev) =>
         prev.map((item) =>
-          item.instanceId === draggingId.id ? { ...item, xPercent: xPct, yPercent: yPct } : item
+          item.instanceId === meta.id ? { ...item, xPercent: xPct, yPercent: yPct } : item
         )
       );
+    }
+  };
+
+  const handleObjectPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const meta = dragMetaRef.current;
+    if (!meta) return;
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // Ignore synthetic event cleanup errors
+    }
+
+    const finishedKind = meta.kind;
+    const finishedId = meta.id;
+    const wasMoved = meta.didMove;
+    let finalXPct = meta.latestXPct;
+    let finalYPct = meta.latestYPct;
+
+    if (wasMoved && benchRef.current && (finalXPct === undefined || finalYPct === undefined)) {
+      const rect = benchRef.current.getBoundingClientRect();
+      finalXPct = Math.min(90, Math.max(10, ((e.clientX - rect.left) / rect.width) * 100));
+      finalYPct = Math.min(84, Math.max(18, ((e.clientY - rect.top) / rect.height) * 100));
+    }
+
+    dragMetaRef.current = null;
+    setDraggingId(null);
+
+    if (wasMoved) {
+      let nextChemItems = chemicalItems;
+      let nextWorkbenchItems = workbenchItems;
+      if (finalXPct !== undefined && finalYPct !== undefined) {
+        if (finishedKind === 'chem') {
+          nextChemItems = chemicalItems.map((item) =>
+            item.instanceId === finishedId
+              ? { ...item, xPercent: finalXPct!, yPercent: finalYPct! }
+              : item
+          );
+          setChemicalItems(nextChemItems);
+        } else {
+          nextWorkbenchItems = workbenchItems.map((item) =>
+            item.instanceId === finishedId
+              ? { ...item, xPercent: finalXPct!, yPercent: finalYPct! }
+              : item
+          );
+          setWorkbenchItems(nextWorkbenchItems);
+        }
+      }
+      evaluateAndTriggerProximity(finishedKind, finishedId, nextChemItems, nextWorkbenchItems);
+    } else if (finishedKind === 'inst') {
+      const item = workbenchItems.find((w) => w.instanceId === finishedId);
+      if (item) handleItemClick(item);
     }
   };
 
@@ -652,35 +1291,35 @@ export function VirtualLabRoom({
   };
 
   const nudgeSelected = (dx: number, dy: number) => {
-    if (selectedInstanceId) {
-      setWorkbenchItems((prev) =>
-        prev.map((w) =>
-          w.instanceId === selectedInstanceId
-            ? {
-                ...w,
-                xPercent: Math.min(88, Math.max(12, w.xPercent + dx)),
-                yPercent: Math.min(84, Math.max(18, w.yPercent + dy)),
-              }
-            : w
-        )
+    if (selectedInstanceId && !lockedObjectIds.has(selectedInstanceId)) {
+      const updated = workbenchItems.map((w) =>
+        w.instanceId === selectedInstanceId
+          ? {
+              ...w,
+              xPercent: Math.min(90, Math.max(10, w.xPercent + dx)),
+              yPercent: Math.min(84, Math.max(18, w.yPercent + dy)),
+            }
+          : w
       );
-    } else if (selectedChemicalInstanceId) {
-      setChemicalItems((prev) =>
-        prev.map((c) =>
-          c.instanceId === selectedChemicalInstanceId
-            ? {
-                ...c,
-                xPercent: Math.min(88, Math.max(12, c.xPercent + dx)),
-                yPercent: Math.min(84, Math.max(18, c.yPercent + dy)),
-              }
-            : c
-        )
+      setWorkbenchItems(updated);
+      evaluateAndTriggerProximity('inst', selectedInstanceId, chemicalItems, updated);
+    } else if (selectedChemicalInstanceId && !lockedObjectIds.has(selectedChemicalInstanceId)) {
+      const updated = chemicalItems.map((c) =>
+        c.instanceId === selectedChemicalInstanceId
+          ? {
+              ...c,
+              xPercent: Math.min(90, Math.max(10, c.xPercent + dx)),
+              yPercent: Math.min(84, Math.max(18, c.yPercent + dy)),
+            }
+          : c
       );
+      setChemicalItems(updated);
+      evaluateAndTriggerProximity('chem', selectedChemicalInstanceId, updated, workbenchItems);
     }
   };
 
   const rotateSelected = () => {
-    if (!selectedInstanceId) return;
+    if (!selectedInstanceId || lockedObjectIds.has(selectedInstanceId)) return;
     setWorkbenchItems((prev) =>
       prev.map((w) =>
         w.instanceId === selectedInstanceId
@@ -691,7 +1330,7 @@ export function VirtualLabRoom({
   };
 
   const removeSelected = () => {
-    if (selectedInstanceId) {
+    if (selectedInstanceId && !lockedObjectIds.has(selectedInstanceId)) {
       setWorkbenchItems((prev) => prev.filter((w) => w.instanceId !== selectedInstanceId));
       setVesselMixtures((prev) => prev.filter((m) => m.vesselInstanceId !== selectedInstanceId));
       setConnections((prev) =>
@@ -700,68 +1339,313 @@ export function VirtualLabRoom({
         )
       );
       setSelectedInstanceId(null);
-    } else if (selectedChemicalInstanceId) {
+      setActivePourPrompt(null);
+    } else if (selectedChemicalInstanceId && !lockedObjectIds.has(selectedChemicalInstanceId)) {
       setChemicalItems((prev) => prev.filter((c) => c.instanceId !== selectedChemicalInstanceId));
       setSelectedChemicalInstanceId(null);
+      setActivePourPrompt(null);
     }
   };
 
-  const vesselItems = useMemo(
-    () =>
-      workbenchItems.filter((w) =>
-        ['chem-beaker', 'chem-conical-flask', 'chem-test-tubes', 'chem-volumetric-flask', 'chem-measuring-cylinder'].includes(
-          w.instrumentId
-        )
-      ),
-    [workbenchItems]
-  );
+  const recordTransferHistoryEntry = (entry: Omit<TransferHistoryEntry, 'id' | 'sequence' | 'timestamp'>) => {
+    setTransferHistory((prev) => [
+      {
+        ...entry,
+        id: `tx-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+        sequence: prev.length + 1,
+        timestamp: new Date().toISOString(),
+      },
+      ...prev,
+    ]);
+  };
 
-  const transferChemicalToVessel = (
-    chemItem: WorkbenchChemicalItem,
-    vesselInstanceId: string,
-    amountReq: number
+  const isTargetHeated = (vesselInstanceId: string) => {
+    const vessel = workbenchItems.find((w) => w.instanceId === vesselInstanceId);
+    if (!vessel) return false;
+    const heaters = workbenchItems.filter(
+      (w) => getInstrumentById(w.instrumentId)?.visualKind === 'heater'
+    );
+    return heaters.some((h) => {
+      const dist = Math.hypot(h.xPercent - vessel.xPercent, h.yPercent - vessel.yPercent);
+      const linked = connections.some(
+        (c) =>
+          (c.fromInstanceId === h.instanceId && c.toInstanceId === vessel.instanceId) ||
+          (c.fromInstanceId === vessel.instanceId && c.toInstanceId === h.instanceId)
+      );
+      return dist < 34 || linked;
+    });
+  };
+
+  const executeAnimatedPour = (
+    sourceId: string,
+    targetId: string,
+    requestedAmount: number,
+    requestedUnit: string
   ) => {
-    const qty = Math.min(chemItem.amount, Math.max(1, amountReq));
-    if (qty <= 0) {
+    const sourceBottle = chemicalItems.find((c) => c.instanceId === sourceId);
+    const targetItem = workbenchItems.find((w) => w.instanceId === targetId);
+    if (!sourceBottle || !targetItem) return;
+
+    const substance = getChemicalById(sourceBottle.chemicalId);
+    const sourceName = getBottleDisplayLabel(sourceBottle, substance);
+    const targetName = numberedLabels[targetItem.instanceId] ?? 'Vessel';
+
+    const validation = validateTransferAttempt({
+      sourceBottle,
+      targetItem,
+      requestedAmount,
+      requestedUnit,
+      vesselMixtures,
+      lockedIds: lockedObjectIds,
+      heaterNearTarget: isTargetHeated(targetItem.instanceId),
+      liveTempC: liveWaterTempC,
+      isSimRunning: isRunning,
+    });
+
+    if (!validation.valid) {
+      recordTransferHistoryEntry({
+        sourceInstanceId: sourceBottle.instanceId,
+        sourceName,
+        sourceChemicalId: sourceBottle.chemicalId,
+        sourceSymbol: substance?.symbol ?? sourceBottle.chemicalId,
+        destinationInstanceId: targetItem.instanceId,
+        destinationName: targetName,
+        requestedAmount,
+        requestedUnit,
+        transferredAmountMlOrG: 0,
+        normalizedUnit: sourceBottle.unit,
+        sourceAfter: sourceBottle.amount,
+        destinationAfter: getVesselCurrentAmount(targetItem.instanceId, vesselMixtures),
+        status: 'blocked',
+        reason: validation.errorMessage,
+      });
       setStatusNotice({
         type: 'warning',
-        text: 'Source chemical container is empty. Replenish quantity or add a fresh bottle from the Chemical Vault.',
+        text: validation.errorMessage || 'Transfer blocked.',
       });
       return;
     }
-    const sub = getChemicalById(chemItem.chemicalId);
-    const targetInst = workbenchItems.find((w) => w.instanceId === vesselInstanceId);
-    const targetDef = targetInst ? getInstrumentById(targetInst.instrumentId) : null;
-    setChemicalItems((prev) =>
-      prev.map((c) =>
-        c.instanceId === chemItem.instanceId
-          ? { ...c, amount: Math.max(0, Number((c.amount - qty).toFixed(1))) }
-          : c
-      )
-    );
-    setVesselMixtures((prev) => {
-      const idx = prev.findIndex(
-        (m) => m.vesselInstanceId === vesselInstanceId && m.chemicalId === chemItem.chemicalId
+
+    // Close modal & prompt; lock objects and launch 10-step pouring animation
+    setQuantityModalTarget(null);
+    setActivePourPrompt(null);
+
+    const startX = sourceBottle.xPercent;
+    const startY = sourceBottle.yPercent;
+    const destX = targetItem.xPercent;
+    const destY = targetItem.yPercent;
+    // Place bottle slightly left or right above rim depending on bench room
+    const pourFromLeft = destX > 26;
+    const hoverX = pourFromLeft ? Math.max(12, destX - 11) : Math.min(88, destX + 11);
+    const hoverY = Math.max(20, destY - 12);
+    const tiltTargetDeg = pourFromLeft ? 54 : -54;
+    const destMouthX = destX;
+    const destMouthY = Math.max(16, destY - 5);
+
+    const bottleCap = sourceBottle.capacity ?? Math.max(sourceBottle.amount, sourceBottle.unit === 'g' ? 10 : 100);
+    const startDestAmt = getVesselCurrentAmount(targetItem.instanceId, vesselMixtures);
+    const destCapacity = getContainerCapacity(targetItem);
+
+    const commitTransfer = () => {
+      const qty = validation.normalizedAmount;
+      setChemicalItems((prev) =>
+        prev.map((c) =>
+          c.instanceId === sourceId
+            ? {
+                ...c,
+                amount: validation.sourceAfter,
+                xPercent: hoverX,
+                yPercent: Math.min(82, destY + 4),
+              }
+            : c
+        )
       );
-      if (idx >= 0) {
-        return prev.map((m, i) =>
-          i === idx ? { ...m, amountMlOrG: Number((m.amountMlOrG + qty).toFixed(1)) } : m
+      setVesselMixtures((prev) => {
+        const idx = prev.findIndex(
+          (m) => m.vesselInstanceId === targetId && m.chemicalId === sourceBottle.chemicalId
         );
+        if (idx >= 0) {
+          return prev.map((m, i) =>
+            i === idx
+              ? { ...m, amountMlOrG: Number((m.amountMlOrG + qty).toFixed(2)) }
+              : m
+          );
+        }
+        return [
+          ...prev,
+          {
+            vesselInstanceId: targetId,
+            chemicalId: sourceBottle.chemicalId,
+            amountMlOrG: qty,
+            unit: sourceBottle.unit,
+          },
+        ];
+      });
+      suppressedPairsRef.current.add(makePairKey(sourceId, targetId));
+      recordTransferHistoryEntry({
+        sourceInstanceId: sourceId,
+        sourceName,
+        sourceChemicalId: sourceBottle.chemicalId,
+        sourceSymbol: substance?.symbol ?? sourceBottle.chemicalId,
+        destinationInstanceId: targetId,
+        destinationName: targetName,
+        requestedAmount,
+        requestedUnit,
+        transferredAmountMlOrG: qty,
+        normalizedUnit: sourceBottle.unit,
+        sourceAfter: validation.sourceAfter,
+        destinationAfter: validation.destAfter,
+        status: 'success',
+      });
+      setPourAnimation(null);
+      setStatusNotice({
+        type: 'success',
+        text: `Transferred ${qty} ${sourceBottle.unit} of ${getShortMaterialName(substance!)} into ${targetName}. (${targetName}: ${validation.destAfter}/${destCapacity} ${sourceBottle.unit})`,
+      });
+    };
+
+    if (reducedMotion) {
+      setPourAnimation({
+        sourceId,
+        targetId,
+        phase: 'pouring',
+        progress01: 0.7,
+        bottleX: hoverX,
+        bottleY: hoverY,
+        bottleTiltDeg: tiltTargetDeg,
+        spoutX: pourFromLeft ? hoverX + 5 : hoverX - 5,
+        spoutY: hoverY + 2,
+        destMouthX,
+        destMouthY,
+        colorHex: substance?.bottleColor ?? '#38BDF8',
+        isSolid: substance?.stateAtRoomTemp === 'Solid',
+        startBottleAmt: sourceBottle.amount,
+        endBottleAmt: validation.sourceAfter,
+        bottleCap,
+        startDestAmt,
+        endDestAmt: validation.destAfter,
+        destCapacity,
+      });
+      window.setTimeout(commitTransfer, 160);
+      return;
+    }
+
+    const tApproach = 260;
+    const tTilt = 220;
+    const tPour = 920;
+    const tReturn = 260;
+    const totalDur = tApproach + tTilt + tPour + tReturn;
+    const startTs = performance.now();
+
+    const step = (now: number) => {
+      const elapsed = now - startTs;
+      if (elapsed >= totalDur) {
+        commitTransfer();
+        return;
       }
-      return [
-        ...prev,
-        {
-          vesselInstanceId,
-          chemicalId: chemItem.chemicalId,
-          amountMlOrG: qty,
-          unit: chemItem.unit,
-        },
-      ];
-    });
-    setStatusNotice({
-      type: 'success',
-      text: `Transferred ${qty} ${chemItem.unit} of ${sub?.symbol ?? chemItem.chemicalId} into ${targetDef?.name ?? 'target vessel'}.`,
-    });
+
+      if (elapsed < tApproach) {
+        const u = elapsed / tApproach;
+        const ease = 1 - Math.pow(1 - u, 3);
+        const bx = startX + (hoverX - startX) * ease;
+        const by = startY + (hoverY - startY) * ease;
+        setPourAnimation({
+          sourceId,
+          targetId,
+          phase: 'approaching',
+          progress01: 0,
+          bottleX: bx,
+          bottleY: by,
+          bottleTiltDeg: 0,
+          spoutX: bx,
+          spoutY: by,
+          destMouthX,
+          destMouthY,
+          colorHex: substance?.bottleColor ?? '#38BDF8',
+          isSolid: substance?.stateAtRoomTemp === 'Solid',
+          startBottleAmt: sourceBottle.amount,
+          endBottleAmt: validation.sourceAfter,
+          bottleCap,
+          startDestAmt,
+          endDestAmt: validation.destAfter,
+          destCapacity,
+        });
+      } else if (elapsed < tApproach + tTilt) {
+        const u = (elapsed - tApproach) / tTilt;
+        setPourAnimation({
+          sourceId,
+          targetId,
+          phase: 'tilting',
+          progress01: 0,
+          bottleX: hoverX,
+          bottleY: hoverY,
+          bottleTiltDeg: tiltTargetDeg * u,
+          spoutX: pourFromLeft ? hoverX + 4.5 * u : hoverX - 4.5 * u,
+          spoutY: hoverY + 1.5 * u,
+          destMouthX,
+          destMouthY,
+          colorHex: substance?.bottleColor ?? '#38BDF8',
+          isSolid: substance?.stateAtRoomTemp === 'Solid',
+          startBottleAmt: sourceBottle.amount,
+          endBottleAmt: validation.sourceAfter,
+          bottleCap,
+          startDestAmt,
+          endDestAmt: validation.destAfter,
+          destCapacity,
+        });
+      } else if (elapsed < tApproach + tTilt + tPour) {
+        const u = (elapsed - tApproach - tTilt) / tPour;
+        setPourAnimation({
+          sourceId,
+          targetId,
+          phase: 'pouring',
+          progress01: u,
+          bottleX: hoverX,
+          bottleY: hoverY,
+          bottleTiltDeg: tiltTargetDeg,
+          spoutX: pourFromLeft ? hoverX + 4.6 : hoverX - 4.6,
+          spoutY: hoverY + 1.6,
+          destMouthX,
+          destMouthY,
+          colorHex: substance?.bottleColor ?? '#38BDF8',
+          isSolid: substance?.stateAtRoomTemp === 'Solid',
+          startBottleAmt: sourceBottle.amount,
+          endBottleAmt: validation.sourceAfter,
+          bottleCap,
+          startDestAmt,
+          endDestAmt: validation.destAfter,
+          destCapacity,
+        });
+      } else {
+        const u = (elapsed - tApproach - tTilt - tPour) / tReturn;
+        const settleY = Math.min(82, destY + 4);
+        setPourAnimation({
+          sourceId,
+          targetId,
+          phase: 'returning',
+          progress01: 1,
+          bottleX: hoverX,
+          bottleY: hoverY + (settleY - hoverY) * u,
+          bottleTiltDeg: tiltTargetDeg * (1 - u),
+          spoutX: hoverX,
+          spoutY: hoverY,
+          destMouthX,
+          destMouthY,
+          colorHex: substance?.bottleColor ?? '#38BDF8',
+          isSolid: substance?.stateAtRoomTemp === 'Solid',
+          startBottleAmt: sourceBottle.amount,
+          endBottleAmt: validation.sourceAfter,
+          bottleCap,
+          startDestAmt,
+          endDestAmt: validation.destAfter,
+          destCapacity,
+        });
+      }
+
+      pourRafRef.current = requestAnimationFrame(step);
+    };
+
+    pourRafRef.current = requestAnimationFrame(step);
   };
 
   const selectedItem = workbenchItems.find((w) => w.instanceId === selectedInstanceId) ?? null;
@@ -779,7 +1663,17 @@ export function VirtualLabRoom({
   );
 
   const drawerInstruments = useMemo(() => {
-    const q = drawerSearch.trim().toLowerCase();
+    const q = drawerSearch.trim();
+    if (drawerScopeAllWings) {
+      return searchCentralRegistry({
+        query: q,
+        department: 'all',
+        includeChemicals: false,
+        sortBy: 'relevance',
+      })
+        .map((e) => e.instrument)
+        .filter((x): x is LabInstrument => Boolean(x));
+    }
     let list: LabInstrument[];
     if (activeRackId && !q) {
       const rack = room.racks.find((r) => r.id === activeRackId);
@@ -792,13 +1686,15 @@ export function VirtualLabRoom({
       list = roomOnlyInstruments;
     }
     if (!q) return list;
-    return list.filter(
-      (i) =>
-        i.name.toLowerCase().includes(q) ||
-        i.category.toLowerCase().includes(q) ||
-        i.description.toLowerCase().includes(q)
-    );
-  }, [activeRackId, drawerSearch, room, roomOnlyInstruments]);
+    return searchCentralRegistry({
+      query: q,
+      department: room.id,
+      includeChemicals: false,
+      sortBy: 'relevance',
+    })
+      .map((e) => e.instrument)
+      .filter((x): x is LabInstrument => Boolean(x));
+  }, [activeRackId, drawerSearch, drawerScopeAllWings, room, roomOnlyInstruments]);
 
   const otherRoomMatch = useMemo(() => {
     const q = drawerSearch.trim().toLowerCase();
@@ -812,20 +1708,56 @@ export function VirtualLabRoom({
 
   // Live visual state passed to each SVG instrument
   const getSimStateForItem = (item: WorkbenchItem): EquipmentSimState => {
-    const chemVisualOverride =
-      room.id === 'chemistry' && chemOutcome
-        ? {
-            liquidColorHex: chemOutcome.liquidColorHex,
-            liquidOpacity: chemOutcome.liquidOpacity,
-            gasActive: chemOutcome.gasEvolution.active,
-            precipitateColorHex: chemOutcome.precipitateOrDeposit.active
-              ? chemOutcome.precipitateOrDeposit.colorHex
-              : undefined,
-            liveTempC: chemOutcome.vesselTempC,
-            isBoiling: chemOutcome.isBoiling,
-            phValue: chemOutcome.phEstimate ?? undefined,
-          }
-        : {};
+    const spec = RECEIVING_CONTAINER_SPECS[item.instrumentId];
+    const isVessel = isReceivingVessel(item.instrumentId);
+    const capacity = isVessel ? getContainerCapacity(item) : 0;
+
+    let vesselOverride: Partial<EquipmentSimState> = {};
+    if (chemistryEnabled && isVessel) {
+      const visual = getVesselLiquidVisual(item.instanceId, vesselMixtures, capacity);
+      let fillRatio01 = visual.fillRatio01;
+      let liquidColorHex = visual.liquidColorHex;
+      let liquidOpacity = visual.liquidOpacity;
+
+      // Interpolate liquid height smoothly while pour animation targets this vessel
+      if (pourAnimation && pourAnimation.targetId === item.instanceId) {
+        const interpAmt =
+          pourAnimation.startDestAmt +
+          (pourAnimation.endDestAmt - pourAnimation.startDestAmt) * pourAnimation.progress01;
+        fillRatio01 =
+          interpAmt <= 0 ? 0 : Math.min(1, Math.max(0.05, interpAmt / Math.max(1, capacity)));
+        if (interpAmt > 0 && visual.isEmpty) {
+          liquidColorHex = pourAnimation.colorHex;
+          liquidOpacity = 0.62;
+        }
+      }
+
+      const thisVesselHasReaction =
+        !visual.isEmpty &&
+        vesselMixtures.some((m) => m.vesselInstanceId === item.instanceId && m.amountMlOrG > 0);
+
+      vesselOverride = {
+        fillRatio01,
+        liquidColorHex:
+          thisVesselHasReaction && chemOutcome && !chemOutcome.blocked
+            ? chemOutcome.liquidColorHex
+            : liquidColorHex,
+        liquidOpacity: fillRatio01 > 0 ? liquidOpacity : 0,
+        vesselKindOverride: spec?.vesselShape,
+        isReceiving:
+          activeDragProximity?.compatibleTargets.some(
+            (t) => t.targetInstanceId === item.instanceId
+          ) || pourAnimation?.targetId === item.instanceId,
+        gasActive: thisVesselHasReaction ? Boolean(chemOutcome?.gasEvolution.active) : false,
+        precipitateColorHex:
+          thisVesselHasReaction && chemOutcome?.precipitateOrDeposit.active
+            ? chemOutcome.precipitateOrDeposit.colorHex
+            : undefined,
+        liveTempC: thisVesselHasReaction && chemOutcome ? chemOutcome.vesselTempC : 25,
+        isBoiling: thisVesselHasReaction ? Boolean(chemOutcome?.isBoiling) : false,
+        phValue: thisVesselHasReaction ? chemOutcome?.phEstimate ?? undefined : undefined,
+      };
+    }
 
     if (experiment.id === 'boiling-point') {
       const pressure = params.pressure ?? 101.325;
@@ -838,7 +1770,7 @@ export function VirtualLabRoom({
         pressureKpa: pressure,
         powerW: item.config.power ?? heaterPowerW,
         isBoiling,
-        ...chemVisualOverride,
+        ...vesselOverride,
       };
     }
     if (experiment.id === 'pendulum-period') {
@@ -868,7 +1800,7 @@ export function VirtualLabRoom({
         isRunning,
         phase: simTimeSec,
         phValue: result.primaryValue,
-        ...chemVisualOverride,
+        ...vesselOverride,
       };
     }
     if (experiment.id === 'mass-volume-density') {
@@ -876,9 +1808,10 @@ export function VirtualLabRoom({
         isRunning,
         massG: result.primaryValue,
         volumeCm3: params.volume ?? 50,
+        ...vesselOverride,
       };
     }
-    return { isRunning, phase: simTimeSec * 2, ...chemVisualOverride };
+    return { isRunning, phase: simTimeSec * 2, ...vesselOverride };
   };
 
   const handleSaveDesignSubmit = (e: React.FormEvent) => {
@@ -891,11 +1824,13 @@ export function VirtualLabRoom({
       experimentId: experiment.id,
       workbenchItems,
       chemicalItems,
+      vesselMixtures,
+      transferHistory,
       connections,
       parameters: { ...params },
       notes: designNotesInput.trim(),
       modelVersion: 'v2.0-campus',
-      status: simTimeSec > 0 ? 'completed' : 'draft',
+      status: simTimeSec > 0 || transferHistory.length > 0 ? 'completed' : 'draft',
       createdAt: now,
       updatedAt: now,
     };
@@ -910,7 +1845,7 @@ export function VirtualLabRoom({
   };
 
   const handleStationClick = (st: RoomStation) => {
-    if (st.opensChemicalCabinet && room.id === 'chemistry') {
+    if (st.opensChemicalCabinet && chemistryEnabled) {
       setChemicalCabinetOpen(true);
       setDrawerOpen(false);
       setActiveStationInfo(null);
@@ -927,7 +1862,6 @@ export function VirtualLabRoom({
 
   const leftRacks = room.racks.filter((r) => r.zonePosition.startsWith('left'));
   const rightRacks = room.racks.filter((r) => r.zonePosition.startsWith('right'));
-  const hasChemistrySaltOrAcid = chemicalItems.length > 0 && room.id === 'chemistry';
 
   return (
     <div className="space-y-4">
@@ -946,16 +1880,28 @@ export function VirtualLabRoom({
             <div>
               <div className="text-[11px] font-mono uppercase tracking-wider flex items-center gap-2 text-blue-700 font-semibold">
                 <Building2 className="w-3.5 h-3.5" />
-                {room.wingCode} · {room.roomDimensionsLabel}
+                {isPersonalLabSession
+                  ? `PERSONAL LAB · ${activePersonalLab?.name || 'Custom Room'}`
+                  : `${room.wingCode} · ${room.roomDimensionsLabel}`}
               </div>
               <h2 className="text-lg sm:text-xl font-display font-bold text-slate-900 leading-tight">
-                {room.name}
+                {isPersonalLabSession ? activePersonalLab?.name || room.name : room.name}
               </h2>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {experiment.id === 'boiling-point' && room.id === 'chemistry' && (
+            {isPersonalLabSession && (
+              <button
+                type="button"
+                onClick={() => navigate('personal-lab')}
+                className="px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-xs font-bold text-emerald-800 hover:bg-emerald-100 flex items-center gap-1.5 min-h-[40px]"
+              >
+                <Wrench className="w-3.5 h-3.5" />
+                Back to Personal Builder
+              </button>
+            )}
+            {experiment.id === 'boiling-point' && chemistryEnabled && (
               <button
                 type="button"
                 onClick={onOpenBoilingAltitudeDemo}
@@ -965,7 +1911,7 @@ export function VirtualLabRoom({
                 Sea Level vs Altitude Dual Demo
               </button>
             )}
-            {room.id === 'chemistry' && (
+            {chemistryEnabled && (
               <button
                 type="button"
                 onClick={() => {
@@ -1077,6 +2023,7 @@ export function VirtualLabRoom({
           setCreatorPrefillPrompt(prefillPrompt);
           navigate('creator');
         }}
+        isPersonalLabMode={isPersonalLabSession}
       />
 
       {/* ========================================================================
@@ -1163,8 +2110,18 @@ export function VirtualLabRoom({
               className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-800 hover:border-blue-400 flex items-center gap-1.5 min-h-[36px]"
             >
               <Plus className="w-3.5 h-3.5 text-blue-700" />
-              Room Inventory ({roomOnlyInstruments.length})
+              Equipment Registry ({LAB_INSTRUMENTS.length})
             </button>
+            {chemistryEnabled && (
+              <button
+                type="button"
+                onClick={() => setHistoryModalOpen(true)}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-800 hover:border-emerald-400 flex items-center gap-1.5 min-h-[36px]"
+              >
+                <History className="w-3.5 h-3.5 text-emerald-700" />
+                Transfer Log ({transferHistory.length})
+              </button>
+            )}
             {workbenchItems.some(
               (w) => getInstrumentById(w.instrumentId)?.visualKind === 'microscope'
             ) && (
@@ -1380,10 +2337,7 @@ export function VirtualLabRoom({
                 ref={benchRef}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={handleBenchDrop}
-                onPointerMove={handleBenchPointerMove}
-                onPointerUp={() => setDraggingId(null)}
-                onPointerLeave={() => setDraggingId(null)}
-                className="relative h-[400px] sm:h-[445px] rounded-2xl border-2 border-slate-400 shadow-xl overflow-hidden bg-gradient-to-b from-slate-800 via-slate-800 to-slate-900"
+                className="relative h-[420px] sm:h-[460px] rounded-2xl border-2 border-slate-400 shadow-xl overflow-hidden bg-gradient-to-b from-slate-800 via-slate-800 to-slate-900"
               >
                 {/* Epoxy Benchtop Mat Grid */}
                 <div
@@ -1443,6 +2397,20 @@ export function VirtualLabRoom({
                   })}
                 </svg>
 
+                {/* Animated Liquid Pour Stream Layer */}
+                {pourAnimation &&
+                  (pourAnimation.phase === 'pouring' || pourAnimation.phase === 'tilting') && (
+                    <PourStreamOverlay
+                      fromXPercent={pourAnimation.spoutX}
+                      fromYPercent={pourAnimation.spoutY}
+                      toXPercent={pourAnimation.destMouthX}
+                      toYPercent={pourAnimation.destMouthY}
+                      colorHex={pourAnimation.colorHex}
+                      progress01={pourAnimation.progress01}
+                      isSolid={pourAnimation.isSolid}
+                    />
+                  )}
+
                 {/* Empty Workbench Prompt */}
                 {workbenchItems.length === 0 && chemicalItems.length === 0 && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 pointer-events-none">
@@ -1462,19 +2430,49 @@ export function VirtualLabRoom({
                   if (!inst) return null;
                   const isSelected = item.instanceId === selectedInstanceId;
                   const isConnectSource = item.instanceId === connectingFromId;
+                  const isDraggingThis =
+                    draggingId?.kind === 'inst' && draggingId.id === item.instanceId;
+                  const isLocked = lockedObjectIds.has(item.instanceId);
+                  const isCompatibleHover = Boolean(
+                    activeDragProximity?.compatibleTargets.some(
+                      (t) => t.targetInstanceId === item.instanceId
+                    )
+                  );
+                  const isIncompatibleHover =
+                    activeDragProximity?.incompatibleNearest?.targetInstanceId === item.instanceId;
+
+                  const vessel = isReceivingVessel(item.instrumentId);
+                  const vesselCap = vessel ? getContainerCapacity(item) : 0;
+                  const liveVesselAmt =
+                    pourAnimation && pourAnimation.targetId === item.instanceId
+                      ? Number(
+                          (
+                            pourAnimation.startDestAmt +
+                            (pourAnimation.endDestAmt - pourAnimation.startDestAmt) *
+                              pourAnimation.progress01
+                          ).toFixed(1)
+                        )
+                      : vessel
+                        ? getVesselCurrentAmount(item.instanceId, vesselMixtures)
+                        : 0;
+
+                  const displayLabel = chemistryEnabled
+                    ? numberedLabels[item.instanceId] ?? inst.name
+                    : inst.name;
 
                   return (
                     <div
                       key={item.instanceId}
+                      data-workbench-object="instrument"
+                      data-instance-id={item.instanceId}
+                      data-instrument-id={item.instrumentId}
+                      data-rotation-deg={item.rotationDeg}
                       role="button"
                       tabIndex={0}
-                      onPointerDown={(e) => {
-                        e.stopPropagation();
-                        if (!connectingFromId) {
-                          setDraggingId({ kind: 'inst', id: item.instanceId });
-                        }
-                        handleItemClick(item);
-                      }}
+                      onPointerDown={(e) => handleObjectPointerDown(e, 'inst', item.instanceId)}
+                      onPointerMove={handleObjectPointerMove}
+                      onPointerUp={handleObjectPointerUp}
+                      onPointerCancel={handleObjectPointerUp}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
@@ -1484,73 +2482,240 @@ export function VirtualLabRoom({
                       style={{
                         left: `${item.xPercent}%`,
                         top: `${item.yPercent}%`,
-                        transform: `translate(-50%, -50%) rotate(${item.rotationDeg}deg)`,
+                        transform: 'translate(-50%, -50%)',
+                        touchAction: 'none',
                       }}
-                      className={`absolute z-20 flex flex-col items-center cursor-grab active:cursor-grabbing rounded-xl p-1.5 transition-shadow ${
-                        isConnectSource
-                          ? 'ring-2 ring-[#F5B942] bg-[#F5B942]/15'
-                          : isSelected
-                            ? 'ring-2 ring-[#35D5F2] bg-[#35D5F2]/10'
-                            : 'hover:bg-white/5'
+                      className={`absolute flex flex-col items-center select-none rounded-xl p-1.5 transition-shadow ${
+                        isDraggingThis
+                          ? 'z-40 cursor-grabbing ring-2 ring-[#35D5F2] bg-[#35D5F2]/15 shadow-2xl scale-105'
+                          : isLocked
+                            ? 'z-25 cursor-not-allowed ring-2 ring-emerald-400 bg-emerald-500/15'
+                            : isCompatibleHover
+                              ? 'z-25 ring-2 ring-emerald-400 bg-emerald-400/20 shadow-lg'
+                              : isIncompatibleHover
+                                ? 'z-25 ring-2 ring-rose-400 bg-rose-500/20'
+                                : isConnectSource
+                                  ? 'z-20 cursor-grab ring-2 ring-[#F5B942] bg-[#F5B942]/15'
+                                  : isSelected
+                                    ? 'z-20 cursor-grab ring-2 ring-[#35D5F2] bg-[#35D5F2]/10'
+                                    : 'z-20 cursor-grab hover:bg-white/5'
                       }`}
                     >
-                      <EquipmentIllustration
-                        kind={inst.visualKind}
-                        sim={getSimStateForItem(item)}
-                        className="w-16 h-16 sm:w-20 sm:h-20 drop-shadow-xl"
-                      />
-                      <span className="mt-0.5 px-2 py-0.5 rounded bg-[#07111F]/92 border border-white/15 text-[10px] font-medium text-white whitespace-nowrap max-w-[130px] truncate">
-                        {inst.name}
+                      {isCompatibleHover && (
+                        <span className="mb-0.5 px-1.5 py-0.5 rounded bg-emerald-600 text-white text-[9px] font-bold uppercase tracking-wider shadow">
+                          Drop to pour
+                        </span>
+                      )}
+                      {isIncompatibleHover && (
+                        <span className="mb-0.5 px-1.5 py-0.5 rounded bg-rose-600 text-white text-[9px] font-bold uppercase tracking-wider shadow">
+                          Cannot pour here
+                        </span>
+                      )}
+                      {isLocked && (
+                        <span className="mb-0.5 px-1.5 py-0.5 rounded bg-emerald-700 text-white text-[9px] font-mono flex items-center gap-1">
+                          <Lock className="w-2.5 h-2.5" />
+                          Pouring
+                        </span>
+                      )}
+                      <div
+                        data-equipment-visual="true"
+                        style={{ transform: `rotate(${item.rotationDeg}deg)` }}
+                        className="pointer-events-none transition-transform"
+                      >
+                        <EquipmentIllustration
+                          kind={inst.visualKind}
+                          sim={getSimStateForItem(item)}
+                          className="w-16 h-16 sm:w-20 sm:h-20 drop-shadow-xl pointer-events-none"
+                        />
+                      </div>
+                      <span
+                        data-equipment-label="true"
+                        className="mt-0.5 px-2 py-0.5 rounded bg-[#07111F]/92 border border-white/15 text-[10px] font-medium text-white whitespace-nowrap max-w-[155px] truncate pointer-events-none"
+                      >
+                        {displayLabel}
+                        {chemistryEnabled && vessel
+                          ? ` · ${liveVesselAmt}/${vesselCap} mL`
+                          : ''}
                       </span>
                     </div>
                   );
                 })}
 
-                {/* Placed Virtual Chemical Sample Bottles (Chemistry Room Only) */}
-                {room.id === 'chemistry' &&
+                {/* Placed Virtual Chemical Sample Bottles */}
+                {chemistryEnabled &&
                   chemicalItems.map((chemItem) => {
                     const chem = getChemicalById(chemItem.chemicalId);
                     if (!chem) return null;
                     const isSelected = chemItem.instanceId === selectedChemicalInstanceId;
+                    const isDraggingThis =
+                      draggingId?.kind === 'chem' && draggingId.id === chemItem.instanceId;
+                    const isPouringThis = pourAnimation?.sourceId === chemItem.instanceId;
+                    const isLocked = lockedObjectIds.has(chemItem.instanceId);
+
+                    const displayX = isPouringThis ? pourAnimation!.bottleX : chemItem.xPercent;
+                    const displayY = isPouringThis ? pourAnimation!.bottleY : chemItem.yPercent;
+                    const displayTilt = isPouringThis ? pourAnimation!.bottleTiltDeg : 0;
+                    const cap = chemItem.capacity ?? Math.max(chemItem.amount, chemItem.unit === 'g' ? 10 : 100);
+                    const liveAmt = isPouringThis
+                      ? Number(
+                          (
+                            pourAnimation!.startBottleAmt +
+                            (pourAnimation!.endBottleAmt - pourAnimation!.startBottleAmt) *
+                              pourAnimation!.progress01
+                          ).toFixed(1)
+                        )
+                      : chemItem.amount;
+                    const fillRatio = cap > 0 ? Math.min(1, Math.max(0, liveAmt / cap)) : 0;
+                    const hasValidTargetNearby = Boolean(
+                      isDraggingThis && activeDragProximity && activeDragProximity.compatibleTargets.length > 0
+                    );
+                    const hasInvalidHover = Boolean(
+                      isDraggingThis &&
+                        activeDragProximity &&
+                        activeDragProximity.compatibleTargets.length === 0 &&
+                        activeDragProximity.incompatibleNearest
+                    );
+
                     return (
                       <div
                         key={chemItem.instanceId}
+                        data-workbench-object="chemical-bottle"
+                        data-instance-id={chemItem.instanceId}
+                        data-chemical-id={chemItem.chemicalId}
                         role="button"
                         tabIndex={0}
-                        onPointerDown={(e) => {
-                          e.stopPropagation();
-                          setDraggingId({ kind: 'chem', id: chemItem.instanceId });
-                          setSelectedChemicalInstanceId(chemItem.instanceId);
-                          setSelectedInstanceId(null);
+                        onPointerDown={(e) => handleObjectPointerDown(e, 'chem', chemItem.instanceId)}
+                        onPointerMove={handleObjectPointerMove}
+                        onPointerUp={handleObjectPointerUp}
+                        onPointerCancel={handleObjectPointerUp}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setSelectedChemicalInstanceId(chemItem.instanceId);
+                            setSelectedInstanceId(null);
+                          }
                         }}
                         style={{
-                          left: `${chemItem.xPercent}%`,
-                          top: `${chemItem.yPercent}%`,
-                          transform: 'translate(-50%, -50%)',
+                          left: `${displayX}%`,
+                          top: `${displayY}%`,
+                          transform: `translate(-50%, -50%) rotate(${displayTilt}deg)`,
+                          touchAction: 'none',
                         }}
-                        className={`absolute z-20 flex flex-col items-center cursor-grab active:cursor-grabbing rounded-xl p-1 ${
-                          isSelected ? 'ring-2 ring-[#35C98A] bg-[#35C98A]/10' : 'hover:bg-white/5'
+                        className={`absolute flex flex-col items-center select-none rounded-xl p-1 transition-shadow ${
+                          isDraggingThis
+                            ? `z-40 cursor-grabbing shadow-2xl scale-105 ${
+                                hasValidTargetNearby
+                                  ? 'ring-2 ring-emerald-400 bg-emerald-400/20'
+                                  : hasInvalidHover
+                                    ? 'ring-2 ring-rose-400 bg-rose-500/20'
+                                    : 'ring-2 ring-[#35C98A] bg-[#35C98A]/15'
+                              }`
+                            : isPouringThis
+                              ? 'z-40 cursor-not-allowed ring-2 ring-emerald-400 bg-emerald-400/15'
+                              : isLocked
+                                ? 'z-25 cursor-not-allowed'
+                                : isSelected
+                                  ? 'z-25 cursor-grab ring-2 ring-[#35C98A] bg-[#35C98A]/10'
+                                  : 'z-20 cursor-grab hover:bg-white/5'
                         }`}
                       >
                         <EquipmentIllustration
                           kind="chemical-bottle"
-                          sim={{ bottleColor: chem.bottleColor, chemicalFormula: chem.formula }}
-                          className="w-12 h-12 sm:w-14 sm:h-14 drop-shadow-lg"
+                          sim={{
+                            bottleColor: chem.bottleColor,
+                            chemicalFormula: chem.formula,
+                            chemicalSymbol: chem.symbol,
+                            concentrationLabel: chem.standardConcentrationOrPurity.split('(')[0].trim(),
+                            bottleFillRatio01: fillRatio,
+                            capOpen:
+                              isPouringThis &&
+                              (pourAnimation?.phase === 'tilting' ||
+                                pourAnimation?.phase === 'pouring'),
+                            isPouring: isPouringThis,
+                          }}
+                          className="w-14 h-14 sm:w-16 sm:h-16 drop-shadow-lg pointer-events-none"
                         />
-                        <span className="px-1.5 py-0.5 rounded bg-[#07111F]/92 border border-[#35C98A]/35 text-[10px] font-mono text-[#35C98A] whitespace-nowrap">
-                          {chem.symbol} · {chemItem.amount}
-                          {chemItem.unit}
+                        <span className="px-1.5 py-0.5 rounded bg-[#07111F]/92 border border-[#35C98A]/35 text-[10px] font-mono tabular-nums text-[#35C98A] whitespace-nowrap pointer-events-none">
+                          {chem.symbol} · {liveAmt} {chemItem.unit}
                         </span>
                       </div>
                     );
                   })}
+
+                {/* Contextual "READY TO POUR?" Popup */}
+                {chemistryEnabled &&
+                  activePourPrompt &&
+                  (() => {
+                    const srcBottle = chemicalItems.find(
+                      (c) => c.instanceId === activePourPrompt.sourceInstanceId
+                    );
+                    const srcSub = srcBottle ? getChemicalById(srcBottle.chemicalId) : null;
+                    if (!srcBottle || !srcSub) return null;
+                    return (
+                      <PourProximityPopup
+                        prompt={activePourPrompt}
+                        sourceBottle={srcBottle}
+                        sourceSubstance={srcSub}
+                        onSelectTarget={(targetId) =>
+                          setActivePourPrompt((prev) =>
+                            prev ? { ...prev, selectedTargetId: targetId } : prev
+                          )
+                        }
+                        onOpenQuantityModal={(targetId) => {
+                          setQuantityModalTarget({
+                            sourceId: activePourPrompt.sourceInstanceId,
+                            targetId,
+                          });
+                          setActivePourPrompt(null);
+                        }}
+                        onDismiss={() => {
+                          for (const cand of activePourPrompt.candidates) {
+                            suppressedPairsRef.current.add(
+                              makePairKey(activePourPrompt.sourceInstanceId, cand.targetInstanceId)
+                            );
+                          }
+                          setActivePourPrompt(null);
+                        }}
+                      />
+                    );
+                  })()}
+
+                {/* Non-blocking Incompatible Drop Explanation */}
+                {chemistryEnabled && incompatibleFeedback && !activePourPrompt && (
+                  <div
+                    role="status"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    style={{
+                      left: `${Math.min(72, Math.max(28, incompatibleFeedback.xPercent))}%`,
+                      top: `${Math.max(16, incompatibleFeedback.yPercent - 14)}%`,
+                      transform: 'translate(-50%, -100%)',
+                    }}
+                    className="absolute z-40 w-[min(300px,calc(100%-24px))] rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-900 shadow-xl flex items-start gap-2"
+                  >
+                    <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <div className="font-bold text-[11px] uppercase tracking-wide text-rose-800">
+                        Incompatible Target
+                      </div>
+                      <p className="leading-snug mt-0.5">{incompatibleFeedback.message}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIncompatibleFeedback(null)}
+                      aria-label="Dismiss incompatible notice"
+                      className="text-rose-600 hover:text-rose-900"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* RIGHT WALL CABINETS & RACKS (Including Chemistry Chemical Vault Door!) */}
+            {/* RIGHT WALL CABINETS & RACKS */}
             {!benchFocusMode && (
               <div className="lg:col-span-2 flex flex-row lg:flex-col gap-2.5 justify-center">
-                {room.id === 'chemistry' && (
+                {chemistryEnabled && (
                   <button
                     type="button"
                     onClick={() => {
@@ -1611,8 +2776,10 @@ export function VirtualLabRoom({
           {/* BOTTOM WORKBENCH ACTION FOOTER INSIDE ROOM */}
           <div className="relative z-20 border-t border-slate-200 bg-white/95 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 backdrop-blur-sm">
             <div className="text-xs text-slate-600">
-              <span className="text-slate-900 font-semibold">Tip:</span> Drag apparatus across the island bench, or select an item to adjust parameters, rotate, or couple tools.
-              {hasChemistrySaltOrAcid && ' Chemical reagent bottles stay isolated in Chemistry.'}
+              <span className="text-slate-900 font-semibold">Tip:</span>{' '}
+              {room.id === 'chemistry'
+                ? 'Drag any chemical bottle beside or directly over a Beaker, Flask, or Cylinder to initiate a guided liquid transfer.'
+                : 'Drag apparatus across the island bench, or select an item to adjust parameters, rotate, or couple tools.'}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -1622,6 +2789,11 @@ export function VirtualLabRoom({
                   setWorkbenchItems([]);
                   setChemicalItems([]);
                   setVesselMixtures([]);
+                  setTransferHistory([]);
+                  setActivePourPrompt(null);
+                  setQuantityModalTarget(null);
+                  setIncompatibleFeedback(null);
+                  suppressedPairsRef.current.clear();
                   setConnections([]);
                   setSelectedInstanceId(null);
                   setSelectedChemicalInstanceId(null);
@@ -1696,29 +2868,44 @@ export function VirtualLabRoom({
                 <div className="flex gap-1.5 overflow-x-auto pb-1">
                   <button
                     type="button"
-                    onClick={() => setActiveRackId(null)}
+                    onClick={() => setDrawerScopeAllWings(false)}
                     className={`px-2.5 py-1 rounded text-[11px] border whitespace-nowrap ${
-                      !activeRackId
+                      !drawerScopeAllWings
                         ? 'bg-blue-700 text-white border-blue-700 font-bold'
                         : 'bg-slate-50 text-slate-600 border-slate-200'
                     }`}
                   >
-                    All ({roomOnlyInstruments.length})
+                    {room.shortName} ({roomOnlyInstruments.length})
                   </button>
-                  {room.racks.map((rk) => (
-                    <button
-                      key={rk.id}
-                      type="button"
-                      onClick={() => setActiveRackId(rk.id)}
-                      className={`px-2.5 py-1 rounded text-[11px] border whitespace-nowrap ${
-                        activeRackId === rk.id
-                          ? 'bg-blue-700 text-white border-blue-700 font-bold'
-                          : 'bg-slate-50 text-slate-600 border-slate-200'
-                      }`}
-                    >
-                      {rk.title.replace(' Rack', '').replace(' Cabinet', '')}
-                    </button>
-                  ))}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDrawerScopeAllWings(true);
+                      setActiveRackId(null);
+                    }}
+                    className={`px-2.5 py-1 rounded text-[11px] border whitespace-nowrap ${
+                      drawerScopeAllWings
+                        ? 'bg-emerald-700 text-white border-emerald-700 font-bold'
+                        : 'bg-slate-50 text-slate-600 border-slate-200'
+                    }`}
+                  >
+                    All Wings ({LAB_INSTRUMENTS.length})
+                  </button>
+                  {!drawerScopeAllWings &&
+                    room.racks.map((rk) => (
+                      <button
+                        key={rk.id}
+                        type="button"
+                        onClick={() => setActiveRackId(rk.id)}
+                        className={`px-2.5 py-1 rounded text-[11px] border whitespace-nowrap ${
+                          activeRackId === rk.id
+                            ? 'bg-blue-700 text-white border-blue-700 font-bold'
+                            : 'bg-slate-50 text-slate-600 border-slate-200'
+                        }`}
+                      >
+                        {rk.title.replace(' Rack', '').replace(' Cabinet', '')}
+                      </button>
+                    ))}
                 </div>
               </div>
 
@@ -1800,7 +2987,7 @@ export function VirtualLabRoom({
       </div>
 
       {/* LIVE CHEMISTRY BENCH REACTION READOUT & SAFETY INTERLOCK */}
-      {room.id === 'chemistry' && chemOutcome && (
+      {chemistryEnabled && chemOutcome && (
         <div
           className={`rounded-xl border p-4 sm:p-5 space-y-3 shadow-sm ${
             chemOutcome.blocked
@@ -1930,99 +3117,57 @@ export function VirtualLabRoom({
             <div className="space-y-3 text-xs">
               <div>
                 <div className="text-sm font-bold text-slate-900">
-                  {selectedChemSubstance.name} ({selectedChemSubstance.symbol})
+                  {getBottleDisplayLabel(selectedChemPlacement, selectedChemSubstance)} ({selectedChemSubstance.symbol})
                 </div>
                 <div className="text-[11px] text-emerald-700 font-medium">
-                  {selectedChemSubstance.category} · IUPAC: {selectedChemSubstance.iupacName}
+                  {selectedChemSubstance.category} · {selectedChemSubstance.standardConcentrationOrPurity}
                 </div>
               </div>
               <div className="flex items-center justify-between rounded-lg bg-slate-50 p-2.5 border border-slate-200">
-                <span className="text-slate-600">Container Balance</span>
+                <span className="text-slate-600">Remaining Quantity</span>
                 <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={0}
-                    max={500}
-                    value={selectedChemPlacement.amount}
-                    onChange={(e) => {
-                      const val = Math.max(0, Math.min(500, Number(e.target.value) || 0));
+                  <span className="font-mono font-bold tabular-nums text-emerald-700 text-sm">
+                    {selectedChemPlacement.amount} {selectedChemPlacement.unit}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const resetAmt = selectedChemSubstance.stateAtRoomTemp === 'Solid' ? 10 : 100;
                       setChemicalItems((prev) =>
                         prev.map((c) =>
-                          c.instanceId === selectedChemPlacement.instanceId ? { ...c, amount: val } : c
+                          c.instanceId === selectedChemPlacement.instanceId
+                            ? { ...c, amount: resetAmt, capacity: resetAmt }
+                            : c
                         )
                       );
+                      setStatusNotice({
+                        type: 'info',
+                        text: `Refilled ${getBottleDisplayLabel(selectedChemPlacement, selectedChemSubstance)} to ${resetAmt} ${selectedChemPlacement.unit}.`,
+                      });
                     }}
-                    className="w-20 px-2 py-1 rounded bg-white border border-slate-200 text-right font-mono text-slate-900"
-                  />
-                  <span className="font-mono text-emerald-700 font-semibold">{selectedChemPlacement.unit}</span>
+                    className="px-2 py-1 rounded border border-slate-200 bg-white text-[11px] font-semibold text-slate-700 hover:border-blue-400"
+                  >
+                    Refill
+                  </button>
                 </div>
               </div>
-              {/* Virtual Material Transfer / Pour to Target Vessel */}
-              <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-2.5 space-y-2">
-                <div className="flex items-center justify-between text-[11px] font-semibold text-blue-900">
-                  <span className="flex items-center gap-1.5">
-                    <ArrowRightLeft className="w-3.5 h-3.5 text-blue-700" />
-                    Transfer / Pour into Vessel
-                  </span>
-                  <div className="flex items-center gap-1">
-                    {[10, 25, 50].map((v) => (
-                      <button
-                        key={v}
-                        type="button"
-                        onClick={() => setTransferAmount(v)}
-                        className={`px-2 py-0.5 rounded font-mono text-[10px] border ${
-                          transferAmount === v
-                            ? 'bg-blue-700 text-white border-blue-700'
-                            : 'bg-white text-slate-700 border-slate-200'
-                        }`}
-                      >
-                        {v} {selectedChemPlacement.unit}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {vesselItems.length === 0 ? (
-                  <p className="text-[11px] text-slate-600">
-                    Place a Beaker, Conical Flask, or Test Tube on the workbench to pour into it.
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {vesselItems.map((vessel) => {
-                      const vInst = getInstrumentById(vessel.instrumentId);
-                      return (
-                        <button
-                          key={vessel.instanceId}
-                          type="button"
-                          onClick={() =>
-                            transferChemicalToVessel(
-                              selectedChemPlacement,
-                              vessel.instanceId,
-                              transferAmount
-                            )
-                          }
-                          className="px-2.5 py-1.5 rounded-lg bg-blue-700 text-white text-[11px] font-semibold hover:bg-blue-800"
-                        >
-                          Pour {transferAmount} {selectedChemPlacement.unit} → {vInst?.name.split('(')[0].trim()}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-2.5 text-emerald-950 leading-relaxed">
+                <strong className="font-semibold">How to Pour:</strong> Drag this bottle beside or directly over a Beaker, Conical Flask, Test Tube, or Measuring Cylinder on the workbench to open the guided transfer prompt.
               </div>
               <div className="text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
                 <strong className="text-slate-900">Safety Note:</strong> {selectedChemSubstance.safetyNote}
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
-                <button type="button" onClick={() => nudgeSelected(-6, 0)} className="p-1.5 rounded border border-slate-200 bg-slate-50 text-slate-800" aria-label="Move left">
+                <button type="button" onClick={() => nudgeSelected(-6, 0)} className="p-2 rounded border border-slate-200 bg-slate-50 text-slate-800" aria-label="Move left">
                   <ArrowLeft className="w-3.5 h-3.5" />
                 </button>
-                <button type="button" onClick={() => nudgeSelected(0, -6)} className="p-1.5 rounded border border-slate-200 bg-slate-50 text-slate-800" aria-label="Move up">
+                <button type="button" onClick={() => nudgeSelected(0, -6)} className="p-2 rounded border border-slate-200 bg-slate-50 text-slate-800" aria-label="Move up">
                   <ArrowUp className="w-3.5 h-3.5" />
                 </button>
-                <button type="button" onClick={() => nudgeSelected(0, 6)} className="p-1.5 rounded border border-slate-200 bg-slate-50 text-slate-800" aria-label="Move down">
+                <button type="button" onClick={() => nudgeSelected(0, 6)} className="p-2 rounded border border-slate-200 bg-slate-50 text-slate-800" aria-label="Move down">
                   <ArrowDown className="w-3.5 h-3.5" />
                 </button>
-                <button type="button" onClick={() => nudgeSelected(6, 0)} className="p-1.5 rounded border border-slate-200 bg-slate-50 text-slate-800" aria-label="Move right">
+                <button type="button" onClick={() => nudgeSelected(6, 0)} className="p-2 rounded border border-slate-200 bg-slate-50 text-slate-800" aria-label="Move right">
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -2034,7 +3179,11 @@ export function VirtualLabRoom({
           ) : (
             <div className="space-y-3 text-xs">
               <div>
-                <div className="text-sm font-bold text-slate-900">{selectedInstrument.name}</div>
+                <div className="text-sm font-bold text-slate-900">
+                  {room.id === 'chemistry'
+                    ? numberedLabels[selectedItem.instanceId] ?? selectedInstrument.name
+                    : selectedInstrument.name}
+                </div>
                 <div className="text-[11px] text-blue-700 font-medium">
                   {selectedInstrument.category} · {selectedInstrument.units}
                 </div>
@@ -2051,24 +3200,52 @@ export function VirtualLabRoom({
                 </div>
               </div>
 
-              {vesselMixtures.some((m) => m.vesselInstanceId === selectedItem.instanceId) && (
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 space-y-1.5">
-                  <div className="font-semibold text-emerald-900">Transferred Vessel Contents</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {vesselMixtures
-                      .filter((m) => m.vesselInstanceId === selectedItem.instanceId)
-                      .map((m) => {
-                        const sub = getChemicalById(m.chemicalId);
-                        return (
-                          <span
-                            key={m.chemicalId}
-                            className="px-2 py-0.5 rounded bg-white border border-emerald-200 font-mono text-[11px] text-emerald-900"
-                          >
-                            {sub?.symbol ?? m.chemicalId}: {m.amountMlOrG} {m.unit}
-                          </span>
-                        );
-                      })}
+              {isReceivingVessel(selectedItem.instrumentId) && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-emerald-900">
+                      Vessel Contents ({getVesselCurrentAmount(selectedItem.instanceId, vesselMixtures)} /{' '}
+                      {getContainerCapacity(selectedItem)} mL)
+                    </span>
+                    {vesselMixtures.some((m) => m.vesselInstanceId === selectedItem.instanceId) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVesselMixtures((prev) =>
+                            prev.filter((m) => m.vesselInstanceId !== selectedItem.instanceId)
+                          );
+                          setStatusNotice({
+                            type: 'info',
+                            text: `Rinsed and emptied ${numberedLabels[selectedItem.instanceId] ?? 'vessel'}.`,
+                          });
+                        }}
+                        className="px-2 py-0.5 rounded border border-emerald-300 bg-white text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100"
+                      >
+                        Empty &amp; Rinse
+                      </button>
+                    )}
                   </div>
+                  {vesselMixtures.some((m) => m.vesselInstanceId === selectedItem.instanceId) ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {vesselMixtures
+                        .filter((m) => m.vesselInstanceId === selectedItem.instanceId)
+                        .map((m) => {
+                          const sub = getChemicalById(m.chemicalId);
+                          return (
+                            <span
+                              key={m.chemicalId}
+                              className="px-2 py-0.5 rounded bg-white border border-emerald-200 font-mono text-[11px] text-emerald-900"
+                            >
+                              {sub?.symbol ?? m.chemicalId}: {m.amountMlOrG} {m.unit}
+                            </span>
+                          );
+                        })}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-emerald-800">
+                      Empty vessel. Drag a chemical bottle near or onto it to transfer reagents.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -2226,8 +3403,8 @@ export function VirtualLabRoom({
         </div>
       </div>
 
-      {/* CHEMISTRY-ONLY CHEMICAL & SUBSTANCE CABINET DRAWER */}
-      {room.id === 'chemistry' && (
+      {/* CHEMICAL & SUBSTANCE CABINET DRAWER */}
+      {chemistryEnabled && (
         <ChemicalCabinetDrawer
           open={chemicalCabinetOpen}
           onClose={() => setChemicalCabinetOpen(false)}
@@ -2269,6 +3446,64 @@ export function VirtualLabRoom({
         open={microscopeOpen}
         onClose={() => setMicroscopeOpen(false)}
         division={activeDivision}
+      />
+
+      {/* POUR QUANTITY & LIVE PREVIEW MODAL */}
+      {(() => {
+        const qBottle = quantityModalTarget
+          ? chemicalItems.find((c) => c.instanceId === quantityModalTarget.sourceId) ?? null
+          : null;
+        const qTarget = quantityModalTarget
+          ? workbenchItems.find((w) => w.instanceId === quantityModalTarget.targetId) ?? null
+          : null;
+        const qSub = qBottle ? getChemicalById(qBottle.chemicalId) ?? null : null;
+        return (
+          <PourQuantityModal
+            open={Boolean(quantityModalTarget && qBottle && qTarget && qSub)}
+            sourceBottle={qBottle}
+            sourceSubstance={qSub}
+            targetItem={qTarget}
+            targetLabel={qTarget ? numberedLabels[qTarget.instanceId] ?? 'Vessel' : 'Vessel'}
+            vesselMixtures={vesselMixtures}
+            lockedIds={lockedObjectIds}
+            heaterNearTarget={qTarget ? isTargetHeated(qTarget.instanceId) : false}
+            liveTempC={liveWaterTempC}
+            isSimRunning={isRunning}
+            onConfirmPour={(amt, unit) => {
+              if (!qBottle || !qTarget) return;
+              executeAnimatedPour(qBottle.instanceId, qTarget.instanceId, amt, unit);
+            }}
+            onCancel={(reason) => {
+              if (qBottle && qTarget) {
+                recordTransferHistoryEntry({
+                  sourceInstanceId: qBottle.instanceId,
+                  sourceName: getBottleDisplayLabel(qBottle, qSub ?? undefined),
+                  sourceChemicalId: qBottle.chemicalId,
+                  sourceSymbol: qSub?.symbol ?? qBottle.chemicalId,
+                  destinationInstanceId: qTarget.instanceId,
+                  destinationName: numberedLabels[qTarget.instanceId] ?? 'Vessel',
+                  requestedAmount: 0,
+                  requestedUnit: qBottle.unit,
+                  transferredAmountMlOrG: 0,
+                  normalizedUnit: qBottle.unit,
+                  sourceAfter: qBottle.amount,
+                  destinationAfter: getVesselCurrentAmount(qTarget.instanceId, vesselMixtures),
+                  status: 'cancelled',
+                  reason: reason || 'Cancelled before confirmation',
+                });
+                suppressedPairsRef.current.add(makePairKey(qBottle.instanceId, qTarget.instanceId));
+              }
+              setQuantityModalTarget(null);
+            }}
+          />
+        );
+      })()}
+
+      {/* TRANSFER HISTORY MODAL */}
+      <TransferHistoryModal
+        open={historyModalOpen}
+        onClose={() => setHistoryModalOpen(false)}
+        entries={transferHistory}
       />
 
       {/* SAVE LAB DESIGN MODAL */}

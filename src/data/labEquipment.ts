@@ -190,7 +190,7 @@ export const LAB_INSTRUMENTS: LabInstrument[] = [
     safetyLevel: 'GREEN',
     supportedModels: [],
     simulationLinked: false,
-    visualKind: 'glassware',
+    visualKind: 'petri-dish',
   },
   {
     id: 'chem-stirring-rod',
@@ -343,7 +343,7 @@ export const LAB_INSTRUMENTS: LabInstrument[] = [
     safetyLevel: 'GREEN',
     supportedModels: ['acid-ph'],
     simulationLinked: false,
-    visualKind: 'glassware',
+    visualKind: 'pipette',
   },
   {
     id: 'chem-micropipette',
@@ -360,7 +360,7 @@ export const LAB_INSTRUMENTS: LabInstrument[] = [
     safetyLevel: 'GREEN',
     supportedModels: [],
     simulationLinked: false,
-    visualKind: 'glassware',
+    visualKind: 'pipette',
   },
   {
     id: 'chem-burette',
@@ -433,7 +433,7 @@ export const LAB_INSTRUMENTS: LabInstrument[] = [
     safetyLevel: 'GREEN',
     supportedModels: ['reaction-rate'],
     simulationLinked: false,
-    visualKind: 'heater',
+    visualKind: 'stirrer',
   },
   {
     id: 'chem-water-bath',
@@ -3560,7 +3560,7 @@ export function getRecommendedKitForExperiment(experimentId: string): Experiment
       return {
         department: 'chemistry',
         instrumentIds: ['chem-burette', 'chem-conical-flask', 'chem-ph-meter', 'chem-magnetic-stirrer'],
-        chemicalIds: ['chem-sub-hcl', 'chem-sub-naoh', 'chem-sub-phenolphthalein'],
+        chemicalIds: ['chem-sub-hcl', 'chem-sub-naoh', 'chem-sub-phenol'],
         defaultItems: [
           { instrumentId: 'chem-burette', xPercent: 34, yPercent: 28, rotationDeg: 0, config: {} },
           { instrumentId: 'chem-conical-flask', xPercent: 34, yPercent: 56, rotationDeg: 0, config: {} },

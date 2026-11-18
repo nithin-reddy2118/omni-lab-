@@ -1149,7 +1149,8 @@ async function startServer() {
 
   app.post('/api/smart-learning/lesson', async (req, res) => {
     const topicQuery = String(req.body?.topicQuery ?? '').trim();
-    const language = req.body?.language === 'kn' ? 'kn' : 'en';
+    const rawLang = String(req.body?.language ?? 'en').trim();
+    const language = rawLang === 'kn' ? 'kn' : rawLang === 'hi' ? 'hi' : 'en';
     const educationLevel = String(req.body?.educationLevel ?? 'classes-8-10');
     const learningStyle = String(req.body?.learningStyle ?? 'visual');
     const durationPreset = String(req.body?.durationPreset ?? 'standard');
@@ -1195,9 +1196,17 @@ async function startServer() {
     }
   });
 
-  app.post('/api/smart-learning/tts', async (req, res) => {
+  const handleAudioNarrationRequest = async (req: express.Request, res: express.Response) => {
+    if (req.body?.simulateFailure === true) {
+      return res.status(503).json({
+        available: false,
+        code: 'TTS_SIMULATED_ERROR',
+        reason: 'Narration service temporarily unavailable. You can retry or enable Device Speech Fallback.',
+      });
+    }
     const text = String(req.body?.text ?? '').trim();
-    const language = req.body?.language === 'kn' ? 'kn' : 'en';
+    const rawLang = String(req.body?.language ?? 'en').trim();
+    const language = rawLang === 'kn' ? 'kn' : rawLang === 'hi' ? 'hi' : 'en';
     const voiceName = typeof req.body?.voiceName === 'string' ? req.body.voiceName : 'Kore';
 
     if (!text) {
@@ -1206,7 +1215,10 @@ async function startServer() {
 
     const result = await synthesizeSceneSpeech({ text, language, voiceName });
     return res.json(result);
-  });
+  };
+
+  app.post('/api/smart-learning/tts', handleAudioNarrationRequest);
+  app.post('/api/audio/narrate', handleAudioNarrationRequest);
 
   app.post('/api/smart-learning/render/init', (_req, res) => {
     return res.json(initRenderJob());

@@ -21,6 +21,11 @@ import {
   LAB_INSTRUMENTS,
 } from '../../data/labEquipment';
 import { EXPERIMENTS } from '../../engine/experiments';
+import {
+  checkInstrumentPlacementCompatibility,
+  findExperimentsForBenchSetup,
+  searchCentralRegistry,
+} from '../../engine/equipmentRegistry';
 import { getSafetyBadgeMeta } from '../../engine/safetyEngine';
 import type {
   ChemicalSubstance,
@@ -46,6 +51,7 @@ interface WorkbenchDiscoveryBarProps {
   levelLabel: string;
   language: LanguageCode;
   onGoToCreator: (prefillPrompt: string) => void;
+  isPersonalLabMode?: boolean;
 }
 
 interface WorkbenchMatchResult {
@@ -108,47 +114,52 @@ export function WorkbenchDiscoveryBar({
   levelLabel,
   language,
   onGoToCreator,
+  isPersonalLabMode = false,
 }: WorkbenchDiscoveryBarProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchScope, setSearchScope] = useState<'room' | 'all'>(
+    isPersonalLabMode ? 'all' : 'room'
+  );
   const [discoveryOpen, setDiscoveryOpen] = useState(true);
   const [customIdea, setCustomIdea] = useState('');
   const [loadingDiscover, setLoadingDiscover] = useState(false);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
   const [discoverResult, setDiscoverResult] = useState<DiscoverResponse | null>(null);
 
-  const roomInstruments = useMemo(
-    () => LAB_INSTRUMENTS.filter((i) => i.department === roomId),
-    [roomId]
-  );
-
   const matchedInstruments = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return roomInstruments.slice(0, 4);
-    return roomInstruments
-      .filter(
-        (i) =>
-          i.name.toLowerCase().includes(q) ||
-          i.category.toLowerCase().includes(q) ||
-          i.description.toLowerCase().includes(q) ||
-          i.scientificPrinciple.toLowerCase().includes(q)
-      )
+    const q = searchQuery.trim();
+    if (!q && searchScope === 'room') {
+      return LAB_INSTRUMENTS.filter((i) => i.department === roomId).slice(0, 4);
+    }
+    const entries = searchCentralRegistry({
+      query: q,
+      department: searchScope === 'all' ? 'all' : roomId,
+      includeChemicals: false,
+      sortBy: 'relevance',
+    });
+    return entries
+      .map((e) => e.instrument)
+      .filter((inst): inst is LabInstrument => Boolean(inst))
       .slice(0, 8);
-  }, [roomInstruments, searchQuery]);
+  }, [roomId, searchQuery, searchScope]);
 
   const crossWingHints = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q || matchedInstruments.length > 0) return [];
-    return LAB_INSTRUMENTS.filter(
-      (i) =>
-        i.department !== roomId &&
-        (i.name.toLowerCase().includes(q) ||
-          i.category.toLowerCase().includes(q) ||
-          i.description.toLowerCase().includes(q))
-    ).slice(0, 3);
-  }, [searchQuery, matchedInstruments.length, roomId]);
+    if (!q || searchScope === 'all' || matchedInstruments.length > 0) return [];
+    return searchCentralRegistry({
+      query: q,
+      department: 'all',
+      includeChemicals: false,
+      sortBy: 'relevance',
+    })
+      .map((e) => e.instrument)
+      .filter((inst): inst is LabInstrument => Boolean(inst && inst.department !== roomId))
+      .slice(0, 3);
+  }, [searchQuery, searchScope, matchedInstruments.length, roomId]);
 
   const matchedChemicals = useMemo(() => {
-    if (roomId !== 'chemistry') return [];
+    const allowChemicals = roomId === 'chemistry' || isPersonalLabMode || searchScope === 'all';
+    if (!allowChemicals) return [];
     const q = searchQuery.trim().toLowerCase();
     if (!q) return [];
     return CHEMISTRY_CHEMICAL_VAULT.filter(
@@ -159,7 +170,7 @@ export function WorkbenchDiscoveryBar({
         c.formula.toLowerCase().includes(q) ||
         c.category.toLowerCase().includes(q)
     ).slice(0, 6);
-  }, [roomId, searchQuery]);
+  }, [roomId, isPersonalLabMode, searchScope, searchQuery]);
 
   // Live deterministic bench readiness preview
   const liveLocalSummary = useMemo(() => {
@@ -170,8 +181,13 @@ export function WorkbenchDiscoveryBar({
 
     const compatWarnings: string[] = [];
     for (let i = 0; i < placedIds.length; i++) {
+      const a = getInstrumentById(placedIds[i]);
+      if (a) {
+        for (const warn of checkInstrumentPlacementCompatibility(a, workbenchItems)) {
+          compatWarnings.push(warn.message);
+        }
+      }
       for (let j = i + 1; j < placedIds.length; j++) {
-        const a = getInstrumentById(placedIds[i]);
         const b = getInstrumentById(placedIds[j]);
         if (a && b) {
           const check = checkInstrumentConnection(a, b);
@@ -203,13 +219,25 @@ export function WorkbenchDiscoveryBar({
       .sort((a, b) => b.score - a.score || b.matchedCount - a.matchedCount)
       .slice(0, 3);
 
+    const registryMatches = findExperimentsForBenchSetup(workbenchItems, chemicalItems);
+
     return {
       placedCount: workbenchItems.length,
       chemicalCount: chemicalItems.length,
       compatWarnings: Array.from(new Set(compatWarnings)),
-      candidates,
+      candidates:
+        candidates.length > 0
+          ? candidates
+          : registryMatches.slice(0, 3).map((m) => ({
+              experimentId: m.experimentId,
+              title: m.shortTitle,
+              department: roomId,
+              matchedCount: m.matchedInstruments,
+              totalReq: m.requiredCount,
+              score: Math.min(100, Math.round((m.matchedInstruments / Math.max(1, m.requiredCount)) * 100)),
+            })),
     };
-  }, [workbenchItems, chemicalItems]);
+  }, [workbenchItems, chemicalItems, roomId]);
 
   const handleAnalyzeWorkbench = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -244,26 +272,51 @@ export function WorkbenchDiscoveryBar({
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 space-y-4 shadow-sm">
-      {/* PART 1: PROMINENT INLINE ROOM EQUIPMENT & CHEMICAL SEARCH */}
+      {/* PART 1: PROMINENT INLINE ROOM EQUIPMENT & CENTRAL REGISTRY SEARCH */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-[11px] font-mono uppercase tracking-wider text-blue-700 font-semibold flex items-center gap-1.5">
               <Search className="w-3.5 h-3.5" />
-              Quick Apparatus &amp; Reagent Search · {getLabRoomById(roomId).shortName}
+              Apparatus &amp; Reagent Search ·{' '}
+              {searchScope === 'all'
+                ? `Central Registry (${LAB_INSTRUMENTS.length} Instruments)`
+                : getLabRoomById(roomId).shortName}
             </div>
             <p className="text-xs text-slate-600 mt-0.5">
-              Search instruments{roomId === 'chemistry' ? ' or virtual chemicals' : ''} inside this wing and click to add straight onto the center workbench.
+              Search tools{roomId === 'chemistry' || isPersonalLabMode || searchScope === 'all' ? ' or virtual chemicals' : ''} and click to add straight onto the center workbench.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setDiscoveryOpen((o) => !o)}
-            className="px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-xs font-semibold text-blue-800 hover:bg-blue-100 flex items-center gap-1.5"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            {discoveryOpen ? 'Hide Discovery Assistant' : 'AI Workbench Discovery'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setSearchScope('room')}
+                className={`px-2.5 py-1 rounded-md font-semibold ${
+                  searchScope === 'room' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'
+                }`}
+              >
+                This Wing
+              </button>
+              <button
+                type="button"
+                onClick={() => setSearchScope('all')}
+                className={`px-2.5 py-1 rounded-md font-semibold ${
+                  searchScope === 'all' ? 'bg-blue-700 text-white shadow-sm' : 'text-slate-600'
+                }`}
+              >
+                All Wings ({LAB_INSTRUMENTS.length})
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDiscoveryOpen((o) => !o)}
+              className="px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-xs font-semibold text-blue-800 hover:bg-blue-100 flex items-center gap-1.5"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              {discoveryOpen ? 'Hide Discovery Assistant' : 'AI Workbench Discovery'}
+            </button>
+          </div>
         </div>
 
         <div className="relative">
@@ -273,9 +326,11 @@ export function WorkbenchDiscoveryBar({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={
-              roomId === 'chemistry'
-                ? 'Search glassware, heater, pH meter, or chemicals (e.g. NaOH, HCl, CuSO4, Burette)...'
-                : 'Search wing instruments by name, category, or principle (e.g. Oscilloscope, Microscope, Sensor)...'
+              searchScope === 'all'
+                ? 'Search ALL 133 instruments & 30 reagents (e.g. Beaker, Multimeter, Stopwatch, Microscope, HCl)...'
+                : roomId === 'chemistry'
+                  ? 'Search glassware, heater, pH meter, or chemicals (e.g. NaOH, HCl, CuSO4, Burette)...'
+                  : 'Search wing instruments by name, category, or principle (e.g. Oscilloscope, Microscope, Sensor)...'
             }
             className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 bg-slate-50 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:bg-white outline-none"
           />
@@ -285,6 +340,7 @@ export function WorkbenchDiscoveryBar({
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
           {matchedInstruments.map((inst) => {
             const safety = getSafetyBadgeMeta(inst.safetyLevel);
+            const isCrossWing = inst.department !== roomId;
             return (
               <div
                 key={inst.id}
@@ -298,6 +354,7 @@ export function WorkbenchDiscoveryBar({
                     {inst.name}
                   </div>
                   <div className="text-[10px] text-slate-500 truncate">
+                    {isCrossWing ? `${getLabRoomById(inst.department).shortName} · ` : ''}
                     {inst.units || inst.category} · <span className={safety.colorClass}>{inst.safetyLevel}</span>
                   </div>
                   <button
@@ -348,17 +405,27 @@ export function WorkbenchDiscoveryBar({
         {crossWingHints.length > 0 && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 flex flex-wrap items-center justify-between gap-2">
             <span>
-              No match in {getLabRoomById(roomId).shortName}, but found in another wing:{' '}
-              <strong>{crossWingHints[0].name}</strong> ({getLabRoomById(crossWingHints[0].department).shortName}).
+              Found in {getLabRoomById(crossWingHints[0].department).shortName}:{' '}
+              <strong>{crossWingHints[0].name}</strong>
             </span>
-            <button
-              type="button"
-              onClick={() => onSwitchRoom(crossWingHints[0].department)}
-              className="px-2.5 py-1 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 inline-flex items-center gap-1"
-            >
-              Visit {getLabRoomById(crossWingHints[0].department).shortName}
-              <ArrowRight className="w-3 h-3" />
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => onAddInstrument(crossWingHints[0])}
+                className="px-2.5 py-1 rounded-lg bg-blue-700 text-white font-semibold hover:bg-blue-800 inline-flex items-center gap-1"
+              >
+                <Plus className="w-3 h-3" />
+                Place Here Anyway
+              </button>
+              <button
+                type="button"
+                onClick={() => onSwitchRoom(crossWingHints[0].department)}
+                className="px-2.5 py-1 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 inline-flex items-center gap-1"
+              >
+                Visit {getLabRoomById(crossWingHints[0].department).shortName}
+                <ArrowRight className="w-3 h-3" />
+              </button>
+            </div>
           </div>
         )}
       </div>

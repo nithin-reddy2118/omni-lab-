@@ -438,6 +438,7 @@ export interface WorkbenchChemicalItem {
   yPercent: number;
   amount: number;
   unit: string;
+  capacity?: number;
 }
 
 export interface EquipmentConfigOption {
@@ -483,7 +484,10 @@ export type EquipmentVisualKind =
   | 'calculator'
   | 'dna-helix'
   | 'cell-model'
-  | 'chemical-bottle';
+  | 'chemical-bottle'
+  | 'pipette'
+  | 'petri-dish'
+  | 'stirrer';
 
 export interface LabInstrument {
   id: string;
@@ -581,6 +585,8 @@ export interface SavedLabDesign {
   experimentId: string;
   workbenchItems: WorkbenchItem[];
   chemicalItems?: WorkbenchChemicalItem[];
+  vesselMixtures?: VesselMixtureEntry[];
+  transferHistory?: TransferHistoryEntry[];
   connections: WorkbenchConnection[];
   parameters: Record<string, number>;
   notes: string;
@@ -792,6 +798,54 @@ export interface VesselMixtureEntry {
   unit: string;
 }
 
+export type TransferStatus = 'success' | 'blocked' | 'cancelled';
+
+export interface TransferHistoryEntry {
+  id: string;
+  sequence: number;
+  timestamp: string;
+  sourceInstanceId: string;
+  sourceName: string;
+  sourceChemicalId: string;
+  sourceSymbol: string;
+  destinationInstanceId: string;
+  destinationName: string;
+  requestedAmount: number;
+  requestedUnit: string;
+  transferredAmountMlOrG: number;
+  normalizedUnit: string;
+  sourceAfter: number;
+  destinationAfter: number;
+  status: TransferStatus;
+  reason?: string;
+}
+
+export interface ActiveChemistryBenchSnapshot {
+  experimentId: string;
+  workbenchItems: WorkbenchItem[];
+  chemicalItems: WorkbenchChemicalItem[];
+  vesselMixtures: VesselMixtureEntry[];
+  connections: WorkbenchConnection[];
+  transferHistory: TransferHistoryEntry[];
+  updatedAt: string;
+}
+
+export interface ChemistryBenchSyncState {
+  experimentId: string;
+  hasPouredContent: boolean;
+  totalTransferredMlOrG: number;
+  derivedParams: Record<string, number>;
+  vesselSummaries: {
+    instanceId: string;
+    label: string;
+    currentAmount: number;
+    capacity: number;
+    unit: string;
+    substancesSummary: string;
+  }[];
+  summaryNote: string;
+}
+
 export type PersonalLabDomain =
   | 'chemistry'
   | 'physics'
@@ -801,7 +855,8 @@ export type PersonalLabDomain =
   | 'electronics'
   | 'environmental'
   | 'engineering'
-  | 'computational';
+  | 'computational'
+  | 'custom-blank';
 
 export type PersonalLabLayout =
   | 'bench-central'

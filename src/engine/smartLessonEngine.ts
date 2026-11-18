@@ -112,7 +112,10 @@ export function classifySmartTopic(
   if (/(photosynth|chlorophyll|ಕಿರಣಜನ್ಯ\s*ಸಂಯೋಗ|ದ್ಯುತಿಸಂಶ್ಲೇಷಣೆ)/i.test(q)) {
     return { subject: 'biology', learningMode: 'biological-process', canonicalKey: 'photosynthesis' };
   }
-  if (/(microscope|plant\s*cell|animal\s*cell|cell\s*structure|dna|mitosis|meiosis|germination|respiration|transpiration)/i.test(q)) {
+  if (/(dna|double\s*helix|nucleotid|gene\s*replication)/i.test(q)) {
+    return { subject: 'biology', learningMode: 'biological-process', canonicalKey: 'dna-helix' };
+  }
+  if (/(microscope|plant\s*cell|animal\s*cell|cell\s*structure|mitosis|meiosis|germination|respiration|transpiration)/i.test(q)) {
     return {
       subject: 'biology',
       learningMode: /(microscope|germination|food\s*test)/i.test(q)
@@ -120,6 +123,9 @@ export function classifySmartTopic(
         : 'biological-process',
       canonicalKey: 'microscope-cell',
     };
+  }
+  if (/(kinetics|activation\s*energy|catalyst|rate\s*of\s*reaction|maxwell)/i.test(q)) {
+    return { subject: 'chemistry', learningMode: 'concept', canonicalKey: 'chemistry-reaction-kinetics' };
   }
 
   // Fallback general subject classification
@@ -134,7 +140,7 @@ export function classifySmartTopic(
             : preferredSubject === 'computer-science'
               ? 'algorithm'
               : 'concept',
-      canonicalKey: 'general',
+      canonicalKey: preferredSubject === 'astronomy' ? 'astronomy-orbit' : 'general',
     };
   }
 
@@ -148,11 +154,11 @@ export function classifySmartTopic(
     return {
       subject: 'chemistry',
       learningMode: preferredStyle === 'practical' ? 'practical-experiment' : 'concept',
-      canonicalKey: 'chemistry-heating-reaction',
+      canonicalKey: 'chemistry-reaction-kinetics',
     };
   }
-  if (/(planet|orbit|rocket|solar|star|gravity|space|telescope|heat\s*shield)/i.test(q)) {
-    return { subject: 'astronomy', learningMode: 'concept', canonicalKey: 'newtons-second-law' };
+  if (/(planet|orbit|rocket|solar|star|gravity|space|telescope|kepler|eclipse|satellite|heat\s*shield)/i.test(q)) {
+    return { subject: 'astronomy', learningMode: 'concept', canonicalKey: 'astronomy-orbit' };
   }
   if (/(pollution|climate|ecosystem|watershed|water\s*filter|soil|environment)/i.test(q)) {
     return { subject: 'environmental', learningMode: 'concept', canonicalKey: 'general' };
@@ -161,13 +167,13 @@ export function classifySmartTopic(
     return { subject: 'engineering', learningMode: 'concept', canonicalKey: 'transistor' };
   }
   if (/(cell|organ|plant|animal|dna|evolution|ecosystem|microbe|biology)/i.test(q)) {
-    return { subject: 'biology', learningMode: 'biological-process', canonicalKey: 'photosynthesis' };
+    return { subject: 'biology', learningMode: 'biological-process', canonicalKey: 'microscope-cell' };
   }
 
   return {
     subject: 'physics',
     learningMode: preferredStyle === 'practical' ? 'practical-experiment' : 'concept',
-    canonicalKey: 'newtons-second-law',
+    canonicalKey: 'general',
   };
 }
 
@@ -1575,16 +1581,21 @@ export function buildDeterministicSmartLesson(opts: {
     };
   }
 
-  // 9. CPU EXECUTION CYCLE / TRANSISTOR / GENERAL STEM FALLBACK
+  // 9. CPU EXECUTION CYCLE / TRANSISTOR / ASTRONOMY / DNA / CELL / KINETICS / GENERAL STEM FALLBACK
   const match = matchLocalScienceTopic(topicQuery);
   const d = (s: number) => Math.max(2.5, Number((s * scaleFactor).toFixed(1)));
+  const isHi = language === 'hi';
   const isCpu = cls.canonicalKey === 'cpu-cycle';
   const isTransistor = cls.canonicalKey === 'transistor';
   const isInduction = cls.canonicalKey === 'em-induction';
   const isOptics = cls.canonicalKey === 'optics-refraction';
   const isPendulum = cls.canonicalKey === 'pendulum';
+  const isOrbit = cls.canonicalKey === 'astronomy-orbit';
+  const isDna = cls.canonicalKey === 'dna-helix';
+  const isCell = cls.canonicalKey === 'microscope-cell';
+  const isKinetics = cls.canonicalKey === 'chemistry-reaction-kinetics';
 
-  const visualKind = isCpu
+  const visualKind: SmartSceneSpec['visualKind'] = isCpu
     ? 'cs-cpu-cycle'
     : isTransistor
       ? 'cs-transistor'
@@ -1594,17 +1605,29 @@ export function buildDeterministicSmartLesson(opts: {
           ? 'physics-optics-refraction'
           : isPendulum
             ? 'physics-pendulum'
-            : cls.canonicalKey === 'circle-geometry'
-              ? 'math-circle-geometry'
-              : cls.subject === 'mathematics'
-                ? 'math-coordinate-graph'
-                : 'general-scientific-diagram';
+            : isOrbit
+              ? 'astronomy-orbit'
+              : isDna
+                ? 'biology-dna'
+                : isCell
+                  ? 'biology-cell-microscope'
+                  : isKinetics
+                    ? 'chemistry-reaction-kinetics'
+                    : cls.canonicalKey === 'circle-geometry'
+                      ? 'math-circle-geometry'
+                      : cls.subject === 'mathematics'
+                        ? 'math-coordinate-graph'
+                        : 'general-scientific-diagram';
 
   const scenes: SmartSceneSpec[] = [
     {
       id: 'gen-1',
       sceneNumber: 1,
-      title: isKn ? 'ದೃಶ್ಯ 1: ಮೂಲಭೂತ ಪರಿಚಯ ಮತ್ತು ವ್ಯವಸ್ಥೆ' : `Scene 1: Core Mechanism of ${topicQuery}`,
+      title: isKn
+        ? 'ದೃಶ್ಯ 1: ಮೂಲಭೂತ ಪರಿಚಯ ಮತ್ತು ವ್ಯವಸ್ಥೆ'
+        : isHi
+          ? `दृश्य 1: ${topicQuery} की मुख्य प्रणाली`
+          : `Scene 1: Core Mechanism of ${topicQuery}`,
       durationSec: d(3.5),
       narrationText: isCpu
         ? 'The Program Counter sends an instruction address to Memory, and the CPU fetches the opcode into the Instruction Register.'
@@ -1614,7 +1637,17 @@ export function buildDeterministicSmartLesson(opts: {
             ? 'Moving a bar magnet through a copper coil changes magnetic flux dΦ/dt, inducing an electromotive force and deflecting the galvanometer.'
             : isOptics
               ? 'Light slows down when entering glass from air, bending toward the normal according to Snell’s Law: n₁ sin θ₁ = n₂ sin θ₂.'
-              : `Let us inspect the key physical parts, variables, and cause-and-effect chain governing "${topicQuery}".`,
+              : isPendulum
+                ? 'A simple pendulum exchanges gravitational potential energy at its turning points for maximum kinetic energy at the bottom, following T = 2π√(L/g).'
+                : isOrbit
+                  ? 'Gravitational attraction pulls a planet toward its host star while tangential velocity sustains an elliptical Keplerian orbit around the focus.'
+                  : isDna
+                    ? 'DNA is an antiparallel double helix in which Adenine pairs with Thymine and Guanine pairs with Cytosine via hydrogen bonds.'
+                    : isCell
+                      ? 'Under a 400× compound microscope, a plant cell reveals a rigid cellulose cell wall, a central vacuole, a violet-stained nucleus, and streaming chloroplasts.'
+                      : isKinetics
+                        ? 'Chemical reactions accelerate when reactant molecules collide with kinetic energy above the activation energy Ea, and catalysts lower that energy barrier.'
+                        : `Let us inspect the key physical parts, variables, and cause-and-effect chain governing "${topicQuery}".`,
       subtitleText: isCpu
         ? 'Stage 1: FETCH (PC → Memory → IR)'
         : isTransistor
@@ -1623,7 +1656,17 @@ export function buildDeterministicSmartLesson(opts: {
             ? 'Faraday’s Law: ε = −N (dΦ_B / dt)'
             : isOptics
               ? 'Snell’s Law: n₁ sin θ₁ = n₂ sin θ₂'
-              : `Visualising core mechanism of ${topicQuery}`,
+              : isPendulum
+                ? 'Simple Harmonic Motion: T = 2π √(L / g)'
+                : isOrbit
+                  ? 'Orbital Gravitation: F = G·M·m / r²'
+                  : isDna
+                    ? 'Double Helix Complementary Base Pairing (A=T, G≡C)'
+                    : isCell
+                      ? '400× Eukaryotic Plant Cell Organelles'
+                      : isKinetics
+                        ? 'Activation Energy & Catalyst Reaction Pathway'
+                        : `Visualising core mechanism of ${topicQuery}`,
       mathOrFormulaHighlight: isCpu
         ? 'Fetch → Decode → Execute'
         : isTransistor
@@ -1632,7 +1675,17 @@ export function buildDeterministicSmartLesson(opts: {
             ? 'ε = −N ΔΦ/Δt'
             : isOptics
               ? 'n₁ sin θ₁ = n₂ sin θ₂'
-              : match.reason.slice(0, 60),
+              : isPendulum
+                ? 'T = 2π √(L/g)'
+                : isOrbit
+                  ? 'F = G M m / r²'
+                  : isDna
+                    ? 'A=T · G≡C'
+                    : isCell
+                      ? 'M = M_obj × M_eye'
+                      : isKinetics
+                        ? 'k = A·e^(-Ea/RT)'
+                        : match.reason.slice(0, 60),
       visualKind,
       visualPayload: { stage: 1, topic: topicQuery },
       caption: 'Stage 1 visual diagram.',
@@ -1640,7 +1693,11 @@ export function buildDeterministicSmartLesson(opts: {
     {
       id: 'gen-2',
       sceneNumber: 2,
-      title: isKn ? 'ದೃಶ್ಯ 2: ಕಾರ್ಯವಿಧಾನ ಮತ್ತು ಫಲಿತಾಂಶ' : 'Scene 2: Dynamic Action & Output',
+      title: isKn
+        ? 'ದೃಶ್ಯ 2: ಕಾರ್ಯವಿಧಾನ ಮತ್ತು ಫಲಿತಾಂಶ'
+        : isHi
+          ? 'दृश्य 2: गतिशील प्रक्रिया और परिणाम'
+          : 'Scene 2: Dynamic Action & Output',
       durationSec: d(3.8),
       narrationText: isCpu
         ? 'The Control Unit decodes the opcode, then the ALU performs arithmetic/logic and writes the result back to registers.'
@@ -1650,7 +1707,13 @@ export function buildDeterministicSmartLesson(opts: {
             ? 'Stopping the magnet makes dΦ/dt = 0 so induced current drops to zero; reversing motion flips the induced current direction (Lenz’s Law).'
             : isOptics
               ? 'Because violet light slows slightly more than red light in glass, a triangular prism separates white light into a clean visible spectrum.'
-              : 'Observe how changing the independent parameter drives measurable system output across verified scientific rules.',
+              : isOrbit
+                ? 'By Kepler’s Second Law, an orbiting body moves fastest when closest to the star at perihelion and slowest at aphelion.'
+                : isDna
+                  ? 'Base complementarity allows each strand to act as a high-fidelity template during semi-conservative DNA replication.'
+                  : isKinetics
+                    ? 'Adding a catalyst provides an alternative pathway with lower activation energy without being consumed in the overall equation.'
+                    : 'Observe how changing the independent parameter drives measurable system output across verified scientific rules.',
       subtitleText: isCpu
         ? 'Stage 2–3: DECODE → ALU EXECUTE → WRITE BACK'
         : isTransistor
@@ -1660,7 +1723,13 @@ export function buildDeterministicSmartLesson(opts: {
             : isOptics
               ? 'Dispersion separates wavelengths by refractive index'
               : 'Dynamic cause-and-effect behaviour verified',
-      mathOrFormulaHighlight: isCpu ? 'ALU(A, B) → R_out' : isTransistor ? 'V_BE > 0.7 V → ON' : 'Verified Principle',
+      mathOrFormulaHighlight: isCpu
+        ? 'ALU(A, B) → R_out'
+        : isTransistor
+          ? 'V_BE > 0.7 V → ON'
+          : isOrbit
+            ? 'T² ∝ a³ (Kepler III)'
+            : 'Verified Principle',
       visualKind,
       visualPayload: { stage: 2, topic: topicQuery },
       caption: 'Stage 2 active transformation.',
@@ -1679,7 +1748,9 @@ export function buildDeterministicSmartLesson(opts: {
     durationPreset,
     topicIntroduction: isKn
       ? `"${topicQuery}" ವಿಷಯವನ್ನು ದೃಶ್ಯ ಅನಿಮೇಷನ್ ಮತ್ತು ಸರಳ ಹಂತಗಳೊಂದಿಗೆ ಅರ್ಥಮಾಡಿಕೊಳ್ಳೋಣ.`
-      : `An interactive, step-by-step visual lesson explaining "${topicQuery}" for ${educationLevel.replace('-', ' ')}.`,
+      : isHi
+        ? `आइए "${topicQuery}" को एनिमेटेड दृश्य और सरल चरणों के माध्यम से समझें।`
+        : `An interactive, step-by-step visual lesson explaining "${topicQuery}" for ${educationLevel.replace('-', ' ')}.`,
     meaningAndDefinition: scenes.map((s) => s.narrationText).join(' '),
     whyConceptMatters: 'Connects fundamental classroom laws to modern technology, instruments, and everyday phenomena.',
     scientificOrMathPrinciple: scenes[0].mathOrFormulaHighlight || 'Systematic cause-and-effect conservation law',

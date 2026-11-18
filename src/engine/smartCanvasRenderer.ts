@@ -787,6 +787,705 @@ function renderAlgorithmVisual(
   ctx.restore();
 }
 
+function renderPendulum(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  scene: SmartSceneSpec,
+  p: number
+) {
+  ctx.save();
+  const pivotX = w * 0.34;
+  const pivotY = 92;
+  const rodLen = 195;
+  const thetaMax = 0.42;
+  const theta = thetaMax * Math.cos(p * Math.PI * 2);
+  const bobX = pivotX + Math.sin(theta) * rodLen;
+  const bobY = pivotY + Math.cos(theta) * rodLen;
+
+  // Support beam
+  ctx.strokeStyle = '#64748B';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(pivotX - 90, pivotY);
+  ctx.lineTo(pivotX + 90, pivotY);
+  ctx.stroke();
+
+  // Equilibrium dashed vertical
+  ctx.save();
+  ctx.setLineDash([5, 5]);
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(pivotX, pivotY);
+  ctx.lineTo(pivotX, pivotY + rodLen + 25);
+  ctx.stroke();
+  ctx.restore();
+
+  // Swing arc
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(pivotX, pivotY, rodLen, Math.PI / 2 - thetaMax, Math.PI / 2 + thetaMax);
+  ctx.stroke();
+
+  // String + bob
+  ctx.strokeStyle = '#E2E8F0';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(pivotX, pivotY);
+  ctx.lineTo(bobX, bobY);
+  ctx.stroke();
+
+  const grad = ctx.createRadialGradient(bobX - 5, bobY - 5, 2, bobX, bobY, 20);
+  grad.addColorStop(0, '#7DD3FC');
+  grad.addColorStop(1, '#0284C7');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(bobX, bobY, 20, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Tangential speed indicator bar on right
+  drawRoundedRect(ctx, w * 0.56, 95, w * 0.38, h - 185, 12);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+  ctx.stroke();
+  ctx.fillStyle = '#BAE6FD';
+  ctx.font = 'bold 16px "JetBrains Mono", monospace';
+  ctx.fillText('T = 2π √(L / g)', w * 0.59, 136);
+  ctx.fillStyle = '#E2E8F0';
+  ctx.font = '14px "DM Sans", sans-serif';
+  ctx.fillText(`Angle θ = ${(theta * (180 / Math.PI)).toFixed(1)}°`, w * 0.59, 174);
+  const speedPct = Math.abs(Math.sin(p * Math.PI * 2));
+  ctx.fillText('Kinetic Energy / Speed', w * 0.59, 214);
+  ctx.fillStyle = 'rgba(30, 41, 59, 0.9)';
+  ctx.fillRect(w * 0.59, 226, w * 0.3, 14);
+  ctx.fillStyle = '#10B981';
+  ctx.fillRect(w * 0.59, 226, w * 0.3 * speedPct, 14);
+  ctx.fillStyle = '#94A3B8';
+  ctx.font = '13px "DM Sans", sans-serif';
+  ctx.fillText('Period depends on Length L & g (independent of mass)', w * 0.59, 274, w * 0.32);
+  ctx.restore();
+}
+
+function renderOpticsRefraction(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  scene: SmartSceneSpec,
+  p: number
+) {
+  ctx.save();
+  const boundaryY = h * 0.48;
+  // Air upper half vs Glass lower half
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.35)';
+  ctx.fillRect(48, 76, w * 0.56, boundaryY - 76);
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
+  ctx.fillRect(48, boundaryY, w * 0.56, h - 76 - boundaryY);
+
+  ctx.strokeStyle = '#38BDF8';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(48, boundaryY);
+  ctx.lineTo(48 + w * 0.56, boundaryY);
+  ctx.stroke();
+
+  const ix = 48 + w * 0.28;
+  // Normal line
+  ctx.save();
+  ctx.setLineDash([5, 5]);
+  ctx.strokeStyle = '#94A3B8';
+  ctx.beginPath();
+  ctx.moveTo(ix, 90);
+  ctx.lineTo(ix, h - 85);
+  ctx.stroke();
+  ctx.restore();
+
+  const theta1 = 0.55 + Math.sin(p * Math.PI * 2) * 0.22;
+  const n1 = 1.0;
+  const n2 = 1.5;
+  const theta2 = Math.asin((n1 / n2) * Math.sin(theta1));
+
+  // Incident ray
+  const rayLen = 135;
+  const sx = ix - Math.sin(theta1) * rayLen;
+  const sy = boundaryY - Math.cos(theta1) * rayLen;
+  ctx.strokeStyle = '#FACC15';
+  ctx.lineWidth = 3.5;
+  ctx.beginPath();
+  ctx.moveTo(sx, sy);
+  ctx.lineTo(ix, boundaryY);
+  ctx.stroke();
+
+  // Refracted ray
+  const ex = ix + Math.sin(theta2) * rayLen;
+  const ey = boundaryY + Math.cos(theta2) * rayLen;
+  ctx.strokeStyle = '#38BDF8';
+  ctx.beginPath();
+  ctx.moveTo(ix, boundaryY);
+  ctx.lineTo(ex, ey);
+  ctx.stroke();
+
+  ctx.fillStyle = '#F8FAFC';
+  ctx.font = 'bold 13px "JetBrains Mono", monospace';
+  ctx.fillText('Medium 1: Air (n₁ = 1.00)', 64, 102);
+  ctx.fillText('Medium 2: Crown Glass (n₂ = 1.50)', 64, boundaryY + 26);
+
+  drawRoundedRect(ctx, w * 0.65, 95, w * 0.3, h - 185, 12);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+  ctx.stroke();
+  ctx.fillStyle = '#BAE6FD';
+  ctx.font = 'bold 15px "JetBrains Mono", monospace';
+  ctx.fillText('n₁ sin θ₁ = n₂ sin θ₂', w * 0.67, 138);
+  ctx.fillStyle = '#FDE047';
+  ctx.fillText(`θ₁ = ${((theta1 * 180) / Math.PI).toFixed(1)}°`, w * 0.67, 178);
+  ctx.fillStyle = '#38BDF8';
+  ctx.fillText(`θ₂ = ${((theta2 * 180) / Math.PI).toFixed(1)}°`, w * 0.67, 208);
+  ctx.fillStyle = '#CBD5E1';
+  ctx.font = '13px "DM Sans", sans-serif';
+  ctx.fillText(scene.caption || 'Light bends toward the normal in higher-n media.', w * 0.67, 248, w * 0.26);
+  ctx.restore();
+}
+
+function renderEmInduction(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  _scene: SmartSceneSpec,
+  p: number
+) {
+  ctx.save();
+  const coilX = w * 0.42;
+  const coilY = h * 0.52;
+
+  // Solenoid loops
+  ctx.strokeStyle = '#F59E0B';
+  ctx.lineWidth = 4;
+  for (let i = -3; i <= 3; i++) {
+    ctx.beginPath();
+    ctx.ellipse(coilX + i * 16, coilY, 12, 54, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Oscillating bar magnet moving in & out
+  const magX = coilX - 155 + Math.sin(p * Math.PI * 2) * 85;
+  drawRoundedRect(ctx, magX - 45, coilY - 18, 45, 36, 4);
+  ctx.fillStyle = '#EF4444';
+  ctx.fill();
+  drawRoundedRect(ctx, magX, coilY - 18, 45, 36, 4);
+  ctx.fillStyle = '#2563EB';
+  ctx.fill();
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = 'bold 14px "JetBrains Mono", monospace';
+  ctx.fillText('S', magX - 28, coilY + 5);
+  ctx.fillText('N', magX + 18, coilY + 5);
+
+  // Galvanometer dial on right
+  const gx = w * 0.77;
+  const gy = coilY;
+  ctx.beginPath();
+  ctx.arc(gx, gy, 64, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+  ctx.fill();
+  ctx.strokeStyle = '#38BDF8';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Wire coil to galvanometer
+  ctx.strokeStyle = '#94A3B8';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(coilX + 48, coilY + 54);
+  ctx.lineTo(gx - 30, gy + 54);
+  ctx.stroke();
+
+  // Induced EMF proportional to velocity d(sin)/dt = cos
+  const emfNorm = Math.cos(p * Math.PI * 2);
+  const needleAngle = -Math.PI / 2 + emfNorm * 0.85;
+  ctx.strokeStyle = '#10B981';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(gx, gy + 18);
+  ctx.lineTo(gx + Math.cos(needleAngle) * 46, gy + 18 + Math.sin(needleAngle) * 46);
+  ctx.stroke();
+  ctx.fillStyle = '#BAE6FD';
+  ctx.font = 'bold 13px "JetBrains Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('GALVANOMETER', gx, gy + 86);
+  ctx.fillText(`Induced ε ∝ dΦ/dt (${emfNorm >= 0 ? '+' : ''}${(emfNorm * 4.2).toFixed(1)} V)`, gx, gy - 82);
+  ctx.restore();
+}
+
+function renderReactionKinetics(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  _scene: SmartSceneSpec,
+  p: number
+) {
+  ctx.save();
+  // Reaction box left: colliding reactant -> product particles
+  drawRoundedRect(ctx, 52, 95, w * 0.42, h - 185, 12);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+  ctx.stroke();
+
+  for (let i = 0; i < 16; i++) {
+    const px = 78 + ((i * 53 + p * 220 * (1 + (i % 3) * 0.3)) % (w * 0.36));
+    const py = 125 + ((i * 37 + Math.sin(p * Math.PI * 2 + i) * 38 + h * 0.35) % (h - 230));
+    ctx.fillStyle = i % 3 === 0 ? '#10B981' : i % 2 === 0 ? '#38BDF8' : '#F59E0B';
+    ctx.beginPath();
+    ctx.arc(px, py, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Right: Energy barrier Ea curve
+  const ox = w * 0.54;
+  const oy = h - 125;
+  ctx.strokeStyle = '#94A3B8';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(ox, 110);
+  ctx.lineTo(ox, oy);
+  ctx.lineTo(w - 50, oy);
+  ctx.stroke();
+
+  // Uncatalyzed vs catalyzed activation barrier
+  ctx.strokeStyle = '#F59E0B';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(ox + 15, oy - 75);
+  ctx.bezierCurveTo(ox + 110, oy - 75, ox + 120, 120, ox + 185, 120);
+  ctx.bezierCurveTo(ox + 250, 120, ox + 260, oy - 25, w - 70, oy - 25);
+  ctx.stroke();
+
+  ctx.save();
+  ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = '#10B981';
+  ctx.beginPath();
+  ctx.moveTo(ox + 15, oy - 75);
+  ctx.bezierCurveTo(ox + 110, oy - 75, ox + 120, 175, ox + 185, 175);
+  ctx.bezierCurveTo(ox + 250, 175, ox + 260, oy - 25, w - 70, oy - 25);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.fillStyle = '#FDE047';
+  ctx.font = 'bold 13px "JetBrains Mono", monospace';
+  ctx.fillText('Uncatalyzed Ea', ox + 135, 112);
+  ctx.fillStyle = '#34D399';
+  ctx.fillText('Catalyzed Ea (Lower Barrier)', ox + 100, 168);
+  ctx.restore();
+}
+
+function renderCellMicroscope(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  _scene: SmartSceneSpec,
+  p: number
+) {
+  ctx.save();
+  const cx = w * 0.36;
+  const cy = h * 0.52;
+  // Circular microscope FOV
+  ctx.beginPath();
+  ctx.arc(cx, cy, 145, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(16, 185, 129, 0.14)';
+  ctx.fill();
+  ctx.strokeStyle = '#34D399';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+
+  // Plant cell wall
+  drawRoundedRect(ctx, cx - 95, cy - 72, 190, 144, 26);
+  ctx.fillStyle = 'rgba(6, 78, 59, 0.45)';
+  ctx.fill();
+  ctx.strokeStyle = '#10B981';
+  ctx.lineWidth = 5;
+  ctx.stroke();
+
+  // Nucleus + Vacuole
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.45)';
+  ctx.beginPath();
+  ctx.ellipse(cx - 22, cy + 5, 48, 36, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#A855F7';
+  ctx.beginPath();
+  ctx.arc(cx + 46, cy - 22, 22, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Orbiting chloroplasts
+  for (let i = 0; i < 6; i++) {
+    const ang = p * Math.PI * 2 + (i * Math.PI) / 3;
+    const kx = cx + Math.cos(ang) * 65;
+    const ky = cy + Math.sin(ang) * 45;
+    ctx.fillStyle = '#22C55E';
+    ctx.beginPath();
+    ctx.ellipse(kx, ky, 9, 5, ang, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawRoundedRect(ctx, w * 0.6, 100, w * 0.34, h - 190, 12);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(52, 211, 153, 0.4)';
+  ctx.stroke();
+  ctx.fillStyle = '#6EE7B7';
+  ctx.font = 'bold 15px "JetBrains Mono", monospace';
+  ctx.fillText('400× Compound Lens View', w * 0.625, 138);
+  ctx.fillStyle = '#E2E8F0';
+  ctx.font = '13px "DM Sans", sans-serif';
+  ctx.fillText('• Rigid Cellulose Cell Wall', w * 0.625, 174);
+  ctx.fillText('• Central Vacuole (Turgor)', w * 0.625, 204);
+  ctx.fillText('• Violet-stained Nucleus (DNA)', w * 0.625, 234);
+  ctx.fillText('• Streaming Chloroplasts', w * 0.625, 264);
+  ctx.restore();
+}
+
+function renderDnaHelix(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  _scene: SmartSceneSpec,
+  p: number
+) {
+  ctx.save();
+  const basePairs = ['A=T', 'G≡C', 'T=A', 'C≡G', 'A=T', 'G≡C', 'C≡G', 'T=A', 'A=T', 'G≡C'];
+  const startX = 110;
+  const spanW = w * 0.52;
+  const cy = h * 0.52;
+  const phase = p * Math.PI * 2;
+
+  for (let i = 0; i < basePairs.length; i++) {
+    const t = i / (basePairs.length - 1);
+    const x = startX + t * spanW;
+    const ang = t * Math.PI * 2.5 + phase;
+    const y1 = cy + Math.sin(ang) * 78;
+    const y2 = cy + Math.sin(ang + Math.PI) * 78;
+
+    ctx.strokeStyle = i % 2 === 0 ? '#38BDF8' : '#10B981';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x, y1);
+    ctx.lineTo(x, y2);
+    ctx.stroke();
+
+    ctx.fillStyle = '#F43F5E';
+    ctx.beginPath();
+    ctx.arc(x, y1, 7, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#FACC15';
+    ctx.beginPath();
+    ctx.arc(x, y2, 7, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#F8FAFC';
+    ctx.font = 'bold 11px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(basePairs[i], x, cy - 95);
+  }
+  ctx.textAlign = 'left';
+  drawRoundedRect(ctx, w * 0.67, 105, w * 0.28, h - 200, 12);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+  ctx.stroke();
+  ctx.fillStyle = '#BAE6FD';
+  ctx.font = 'bold 15px "JetBrains Mono", monospace';
+  ctx.fillText('Complementary Pairing', w * 0.69, 145);
+  ctx.fillStyle = '#E2E8F0';
+  ctx.font = '13px "DM Sans", sans-serif';
+  ctx.fillText('Adenine (A) ── Thymine (T)', w * 0.69, 185);
+  ctx.fillText('Guanine (G) ── Cytosine (C)', w * 0.69, 215);
+  ctx.fillText('Antiparallel Sugar-Phosphate', w * 0.69, 250);
+  ctx.restore();
+}
+
+function renderCoordinateGraph(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  scene: SmartSceneSpec,
+  p: number
+) {
+  ctx.save();
+  const ox = w * 0.36;
+  const oy = h * 0.58;
+  ctx.strokeStyle = '#64748B';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(80, oy);
+  ctx.lineTo(w * 0.64, oy);
+  ctx.moveTo(ox, 88);
+  ctx.lineTo(ox, h - 82);
+  ctx.stroke();
+
+  // Plot smooth parabola y = 0.015 x^2
+  ctx.strokeStyle = '#38BDF8';
+  ctx.lineWidth = 3.5;
+  ctx.beginPath();
+  const maxDx = 150;
+  for (let dx = -maxDx; dx <= maxDx; dx += 4) {
+    const px = ox + dx;
+    const py = oy - (dx * dx) / 135 + 35;
+    if (dx === -maxDx) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+
+  // Moving point along curve
+  const curDx = -maxDx + p * maxDx * 2;
+  const curX = ox + curDx;
+  const curY = oy - (curDx * curDx) / 135 + 35;
+  ctx.fillStyle = '#FACC15';
+  ctx.beginPath();
+  ctx.arc(curX, curY, 8, 0, Math.PI * 2);
+  ctx.fill();
+
+  drawRoundedRect(ctx, w * 0.67, 100, w * 0.28, h - 190, 12);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+  ctx.stroke();
+  ctx.fillStyle = '#BAE6FD';
+  ctx.font = 'bold 15px "JetBrains Mono", monospace';
+  ctx.fillText(scene.mathOrFormulaHighlight || 'y = f(x)', w * 0.69, 145);
+  ctx.fillStyle = '#FDE047';
+  ctx.fillText(`x = ${(curDx / 30).toFixed(2)}`, w * 0.69, 185);
+  ctx.fillText(`y = ${((curDx / 30) ** 2 - 1.1).toFixed(2)}`, w * 0.69, 215);
+  ctx.restore();
+}
+
+function renderCircleGeometry(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  _scene: SmartSceneSpec,
+  p: number
+) {
+  ctx.save();
+  const cx = w * 0.36;
+  const cy = h * 0.52;
+  const r = 125;
+  const sweep = Math.max(0.2, p * Math.PI * 2);
+
+  // Shaded sector
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.22)';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.arc(cx, cy, r, 0, sweep);
+  ctx.closePath();
+  ctx.fill();
+
+  // Full circle outline
+  ctx.strokeStyle = '#38BDF8';
+  ctx.lineWidth = 3.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Radius line
+  ctx.strokeStyle = '#FACC15';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + Math.cos(sweep) * r, cy + Math.sin(sweep) * r);
+  ctx.stroke();
+
+  drawRoundedRect(ctx, w * 0.62, 100, w * 0.32, h - 190, 12);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+  ctx.stroke();
+  ctx.fillStyle = '#BAE6FD';
+  ctx.font = 'bold 16px "JetBrains Mono", monospace';
+  ctx.fillText('C = 2πr   |   A = πr²', w * 0.64, 145);
+  ctx.fillStyle = '#E2E8F0';
+  ctx.font = '14px "DM Sans", sans-serif';
+  ctx.fillText(`Swept Angle: ${((sweep * 180) / Math.PI).toFixed(0)}° / 360°`, w * 0.64, 185);
+  ctx.fillText(`π ≈ 3.14159`, w * 0.64, 220);
+  ctx.restore();
+}
+
+function renderCpuCycle(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  _scene: SmartSceneSpec,
+  p: number
+) {
+  ctx.save();
+  const stages = [
+    { name: '1. FETCH', sub: 'PC → Memory → IR', color: '#38BDF8' },
+    { name: '2. DECODE', sub: 'Control Unit', color: '#A855F7' },
+    { name: '3. EXECUTE', sub: 'ALU Math & Logic', color: '#10B981' },
+    { name: '4. WRITEBACK', sub: 'Registers / RAM', color: '#F59E0B' },
+  ];
+  const activeIdx = Math.min(3, Math.floor(p * 4));
+  const cy = h * 0.5;
+  const gap = (w - 160) / 4;
+
+  stages.forEach((st, idx) => {
+    const bx = 95 + idx * gap;
+    const active = idx === activeIdx;
+    drawRoundedRect(ctx, bx, cy - 55, gap - 22, 110, 12);
+    ctx.fillStyle = active ? 'rgba(37, 99, 235, 0.35)' : 'rgba(15, 23, 42, 0.88)';
+    ctx.fill();
+    ctx.strokeStyle = active ? st.color : '#475569';
+    ctx.lineWidth = active ? 3.5 : 1.5;
+    ctx.stroke();
+
+    ctx.fillStyle = st.color;
+    ctx.font = 'bold 14px "JetBrains Mono", monospace';
+    ctx.fillText(st.name, bx + 14, cy - 12);
+    ctx.fillStyle = '#E2E8F0';
+    ctx.font = '12px "DM Sans", sans-serif';
+    ctx.fillText(st.sub, bx + 14, cy + 16, gap - 44);
+  });
+
+  // Instruction packet dot
+  const packetX = 95 + (gap - 22) / 2 + p * (gap * 3);
+  ctx.fillStyle = '#FACC15';
+  ctx.beginPath();
+  ctx.arc(packetX, cy + 82, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function renderTransistor(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  _scene: SmartSceneSpec,
+  p: number
+) {
+  ctx.save();
+  const cx = w * 0.36;
+  const cy = h * 0.52;
+  const isOn = p >= 0.45;
+
+  // Collector-Emitter path
+  ctx.strokeStyle = isOn ? '#10B981' : '#64748B';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(cx, 110);
+  ctx.lineTo(cx, cy - 30);
+  ctx.moveTo(cx, cy + 30);
+  ctx.lineTo(cx, h - 105);
+  ctx.stroke();
+
+  // Circle symbol
+  ctx.strokeStyle = '#38BDF8';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 48, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Base input
+  ctx.strokeStyle = isOn ? '#FACC15' : '#475569';
+  ctx.beginPath();
+  ctx.moveTo(cx - 120, cy);
+  ctx.lineTo(cx - 20, cy);
+  ctx.stroke();
+
+  // Flowing electrons when ON
+  if (isOn) {
+    for (let i = 0; i < 6; i++) {
+      const y = 115 + (((p * 3 + i * 0.16) % 1) * (h - 220));
+      ctx.fillStyle = '#34D399';
+      ctx.beginPath();
+      ctx.arc(cx, y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  drawRoundedRect(ctx, w * 0.58, 100, w * 0.36, h - 190, 12);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+  ctx.fill();
+  ctx.strokeStyle = isOn ? '#10B981' : '#64748B';
+  ctx.stroke();
+  ctx.fillStyle = isOn ? '#34D399' : '#CBD5E1';
+  ctx.font = 'bold 16px "JetBrains Mono", monospace';
+  ctx.fillText(isOn ? 'STATE: ON (Logic 1)' : 'STATE: OFF (Logic 0)', w * 0.61, 145);
+  ctx.fillStyle = '#E2E8F0';
+  ctx.font = '13px "DM Sans", sans-serif';
+  ctx.fillText(isOn ? 'V_BE = 0.75 V → Collector current flows' : 'V_BE = 0.0 V → Barrier blocks current', w * 0.61, 185, w * 0.3);
+  ctx.restore();
+}
+
+function renderAstronomyOrbit(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  _scene: SmartSceneSpec,
+  p: number
+) {
+  ctx.save();
+  const cx = w * 0.38;
+  const cy = h * 0.52;
+  const rx = 185;
+  const ry = 115;
+  const sunX = cx - 65;
+
+  // Starfield accents
+  ctx.fillStyle = 'rgba(248, 250, 252, 0.45)';
+  for (let i = 0; i < 18; i++) {
+    ctx.fillRect((i * 89) % w, 72 + ((i * 53) % (h - 150)), 2, 2);
+  }
+
+  // Elliptical orbit
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Sun at focus
+  const sunGrad = ctx.createRadialGradient(sunX, cy, 4, sunX, cy, 28);
+  sunGrad.addColorStop(0, '#FEF08A');
+  sunGrad.addColorStop(1, '#F59E0B');
+  ctx.fillStyle = sunGrad;
+  ctx.beginPath();
+  ctx.arc(sunX, cy, 26, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Orbiting planet
+  const ang = p * Math.PI * 2;
+  const px = cx + Math.cos(ang) * rx;
+  const py = cy + Math.sin(ang) * ry;
+  ctx.fillStyle = '#38BDF8';
+  ctx.beginPath();
+  ctx.arc(px, py, 13, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Radius line Sun -> Planet
+  ctx.strokeStyle = 'rgba(250, 204, 21, 0.5)';
+  ctx.beginPath();
+  ctx.moveTo(sunX, cy);
+  ctx.lineTo(px, py);
+  ctx.stroke();
+
+  drawRoundedRect(ctx, w * 0.65, 100, w * 0.3, h - 190, 12);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+  ctx.stroke();
+  ctx.fillStyle = '#BAE6FD';
+  ctx.font = 'bold 15px "JetBrains Mono", monospace';
+  ctx.fillText('F = G·M·m / r²', w * 0.67, 145);
+  ctx.fillStyle = '#E2E8F0';
+  ctx.font = '13px "DM Sans", sans-serif';
+  ctx.fillText('• Elliptical orbit (Kepler I)', w * 0.67, 185);
+  ctx.fillText('• Faster near perihelion', w * 0.67, 215);
+  ctx.fillText('• Gravity provides centripetal force', w * 0.67, 245, w * 0.26);
+  ctx.restore();
+}
+
 function renderGeneralOrChemistryTube(
   ctx: CanvasRenderingContext2D,
   w: number,
@@ -907,11 +1606,26 @@ export function renderSmartSceneFrame(
     case 'math-pythagoras':
       renderPythagoras(ctx, w, h, scene, p, opts);
       break;
+    case 'math-coordinate-graph':
+      renderCoordinateGraph(ctx, w, h, scene, p);
+      break;
+    case 'math-circle-geometry':
+      renderCircleGeometry(ctx, w, h, scene, p);
+      break;
     case 'physics-newtons-second-law':
       renderNewtonsSecondLaw(ctx, w, h, scene, p, opts);
       break;
     case 'physics-ohms-law-circuit':
       renderOhmsLawCircuit(ctx, w, h, scene, p, opts);
+      break;
+    case 'physics-pendulum':
+      renderPendulum(ctx, w, h, scene, p);
+      break;
+    case 'physics-optics-refraction':
+      renderOpticsRefraction(ctx, w, h, scene, p);
+      break;
+    case 'physics-em-induction':
+      renderEmInduction(ctx, w, h, scene, p);
       break;
     case 'physics-boiling-altitude':
       renderBoilingAltitude(ctx, w, h, scene, p);
@@ -919,12 +1633,30 @@ export function renderSmartSceneFrame(
     case 'chemistry-electrolysis':
       renderElectrolysis(ctx, w, h, scene, p);
       break;
+    case 'chemistry-reaction-kinetics':
+      renderReactionKinetics(ctx, w, h, scene, p);
+      break;
     case 'biology-photosynthesis':
       renderPhotosynthesis(ctx, w, h, scene, p);
+      break;
+    case 'biology-cell-microscope':
+      renderCellMicroscope(ctx, w, h, scene, p);
+      break;
+    case 'biology-dna':
+      renderDnaHelix(ctx, w, h, scene, p);
       break;
     case 'cs-binary-search':
     case 'cs-sorting':
       renderAlgorithmVisual(ctx, w, h, scene);
+      break;
+    case 'cs-cpu-cycle':
+      renderCpuCycle(ctx, w, h, scene, p);
+      break;
+    case 'cs-transistor':
+      renderTransistor(ctx, w, h, scene, p);
+      break;
+    case 'astronomy-orbit':
+      renderAstronomyOrbit(ctx, w, h, scene, p);
       break;
     default:
       renderGeneralOrChemistryTube(ctx, w, h, scene, p);

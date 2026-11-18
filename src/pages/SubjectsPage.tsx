@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { BookOpen, Film, FlaskConical, GraduationCap, Search } from 'lucide-react';
 import { useLab } from '../context/LabContext';
+import { AudioNarrationBar } from '../components/ui/AudioNarrationBar';
 import { EDUCATION_DIVISIONS } from '../data/divisions';
 
 export function SubjectsPage() {
@@ -127,6 +128,16 @@ export function SubjectsPage() {
                   <Film className="w-3.5 h-3.5" />
                   Smart Video
                 </button>
+              </div>
+              <div onClick={(e) => e.stopPropagation()}>
+                <AudioNarrationBar
+                  compact
+                  title={subj.name}
+                  segments={[
+                    { label: subj.name, text: subj.summary },
+                    { label: 'Core Topics', text: subj.keyTopics.join(', ') },
+                  ]}
+                />
               </div>
             </div>
           );

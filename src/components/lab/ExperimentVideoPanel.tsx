@@ -14,6 +14,7 @@ import { matchLocalScienceTopic } from '../../engine/localFallback';
 import type { ExperimentDefinition, ScienceVideoItem } from '../../types/science';
 import { ScientificIllustrationFallback } from '../explorer/ScientificIllustrationFallback';
 import { SmartVideoLessonWidget } from '../smart/SmartVideoLessonWidget';
+import { AudioNarrationBar } from '../ui/AudioNarrationBar';
 
 interface ExperimentVideoPanelProps {
   experiment: ExperimentDefinition;
@@ -84,6 +85,7 @@ export function ExperimentVideoPanel({ experiment }: ExperimentVideoPanelProps) 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [playbackFailed, setPlaybackFailed] = useState(false);
+  const [videoVerified, setVideoVerified] = useState(false);
 
   const match = matchLocalScienceTopic(`${experiment.title} ${experiment.principle}`);
 
@@ -199,13 +201,19 @@ export function ExperimentVideoPanel({ experiment }: ExperimentVideoPanelProps) 
                     preload="metadata"
                     poster={activeVideo.thumbnailUrl}
                     src={activeVideo.playableUrl}
+                    onLoadedMetadata={() => setVideoVerified(true)}
                     onError={() => setPlaybackFailed(true)}
                     className="w-full h-full object-contain"
                   />
                 </div>
                 <div className="p-4 space-y-2 bg-white">
-                  <div className="text-xs font-semibold text-blue-700">
-                    {activeVideo.provider} · {activeVideo.creator}
+                  <div className="text-xs font-semibold text-blue-700 flex items-center gap-2">
+                    <span>{activeVideo.provider} · {activeVideo.creator}</span>
+                    {videoVerified && (
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 font-mono text-[10px]">
+                        Stream Verified
+                      </span>
+                    )}
                   </div>
                   <div className="text-sm font-semibold text-slate-900">{activeVideo.title}</div>
                   <p className="text-xs text-slate-600">{activeVideo.description}</p>
@@ -296,6 +304,14 @@ export function ExperimentVideoPanel({ experiment }: ExperimentVideoPanelProps) 
 
           {/* Right: Pedagogical Observation & Experiment Link */}
           <div className="lg:col-span-6 rounded-xl border border-slate-200 bg-slate-50 p-5 space-y-4 text-xs sm:text-sm">
+            <AudioNarrationBar
+              title={`${experiment.shortTitle} Video Guide`}
+              segments={[
+                { label: 'What to Observe', text: guide.whatToObserve.join(' ') },
+                { label: 'Principle', text: `${experiment.principle}. Formula: ${experiment.formula}` },
+                { label: 'How It Relates', text: guide.howItRelates },
+              ]}
+            />
             <div>
               <div className="text-xs font-semibold text-blue-700">What to Observe</div>
               <ul className="list-disc pl-4 mt-1.5 space-y-1 text-slate-700">

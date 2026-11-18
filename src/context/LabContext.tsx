@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type {
   AchievementItem,
+  ActiveChemistryBenchSnapshot,
   CustomExperimentDefinition,
   EducationDivision,
   EngineeringBranch,
@@ -22,6 +23,7 @@ import type {
   TeacherAssignment,
   TrialRecord,
   UserRole,
+  WorkbenchItem,
 } from '../types/science';
 import { getRecommendedDefaultExperimentForProfile } from '../data/curriculumEngine';
 import type {
@@ -38,6 +40,9 @@ export interface WorkbenchHandoff {
   enterRoomDirectly?: boolean;
   autoOpenBoilingDemo?: boolean;
   savedDesignId?: string;
+  personalLabId?: string;
+  workbenchItems?: WorkbenchItem[];
+  customRacks?: { id: string; title: string; instrumentIds: string[] }[];
 }
 import {
   ACHIEVEMENT_CATALOG,
@@ -97,6 +102,7 @@ interface PersistedState {
   personalLabs: PersonalLabWorkspace[];
   activePersonalLabId: string | null;
   curriculumCompletedIds: string[];
+  activeChemistryBench: ActiveChemistryBenchSnapshot | null;
 }
 
 const DEFAULT_PERSISTED: PersistedState = {
@@ -142,6 +148,7 @@ const DEFAULT_PERSISTED: PersistedState = {
   personalLabs: [],
   activePersonalLabId: null,
   curriculumCompletedIds: [],
+  activeChemistryBench: null,
 };
 
 const VALID_PAGES = new Set<PageId>([
@@ -205,6 +212,7 @@ function loadState(): PersistedState {
       selectedChapter: parsed.selectedChapter ?? null,
       savedDiscoveries: Array.isArray(parsed.savedDiscoveries) ? parsed.savedDiscoveries : [],
       unfinishedExperiment: parsed.unfinishedExperiment ?? null,
+      activeChemistryBench: parsed.activeChemistryBench ?? null,
       activeDepartment: parsed.activeDepartment || 'physics',
       publicInnovations:
         parsed.publicInnovations && parsed.publicInnovations.length > 0
@@ -268,6 +276,15 @@ interface LabContextValue {
   activePersonalLabId: string | null;
   setActivePersonalLabId: (id: string | null) => void;
   savePersonalLab: (lab: PersonalLabWorkspace) => void;
+  updatePersonalLabWorkspace: (
+    labId: string,
+    patch: Partial<
+      Pick<
+        PersonalLabWorkspace,
+        'workbenchItems' | 'chemicalIds' | 'activeExperimentId' | 'notes' | 'customRacks' | 'name' | 'department'
+      >
+    >
+  ) => void;
   deletePersonalLab: (id: string) => void;
   curriculumCompletedIds: string[];
   toggleCurriculumCompleted: (id: string) => void;
@@ -295,6 +312,8 @@ interface LabContextValue {
   recordRecentEquipment: (instrumentId: string) => void;
   activeDepartment: LabDepartmentId;
   setActiveDepartment: (dept: LabDepartmentId) => void;
+  activeChemistryBench: ActiveChemistryBenchSnapshot | null;
+  setActiveChemistryBench: (snapshot: ActiveChemistryBenchSnapshot | null) => void;
   workbenchHandoff: WorkbenchHandoff | null;
   setWorkbenchHandoff: React.Dispatch<React.SetStateAction<WorkbenchHandoff | null>>;
   savedDiscoveryIds: string[];
@@ -568,6 +587,30 @@ export function LabProvider({ children }: { children: React.ReactNode }) {
     [touchStreak]
   );
 
+  const updatePersonalLabWorkspace = useCallback(
+    (
+      labId: string,
+      patch: Partial<
+        Pick<
+          PersonalLabWorkspace,
+          'workbenchItems' | 'chemicalIds' | 'activeExperimentId' | 'notes' | 'customRacks' | 'name' | 'department'
+        >
+      >
+    ) => {
+      setState((prev) => {
+        const exists = prev.personalLabs.some((p) => p.id === labId);
+        if (!exists) return prev;
+        return {
+          ...prev,
+          personalLabs: prev.personalLabs.map((p) =>
+            p.id === labId ? { ...p, ...patch, updatedAt: new Date().toISOString() } : p
+          ),
+        };
+      });
+    },
+    []
+  );
+
   const deletePersonalLab = useCallback((id: string) => {
     setState((prev) => ({
       ...prev,
@@ -755,6 +798,10 @@ export function LabProvider({ children }: { children: React.ReactNode }) {
 
   const setActiveDepartment = useCallback((activeDepartment: LabDepartmentId) => {
     setState((prev) => ({ ...prev, activeDepartment }));
+  }, []);
+
+  const setActiveChemistryBench = useCallback((activeChemistryBench: ActiveChemistryBenchSnapshot | null) => {
+    setState((prev) => ({ ...prev, activeChemistryBench }));
   }, []);
 
   const toggleSaveDiscovery = useCallback((id: string) => {
@@ -1047,6 +1094,7 @@ export function LabProvider({ children }: { children: React.ReactNode }) {
     activePersonalLabId: state.activePersonalLabId,
     setActivePersonalLabId: (activePersonalLabId) => setState((prev) => ({ ...prev, activePersonalLabId })),
     savePersonalLab,
+    updatePersonalLabWorkspace,
     deletePersonalLab,
     curriculumCompletedIds: state.curriculumCompletedIds,
     toggleCurriculumCompleted,
@@ -1074,6 +1122,8 @@ export function LabProvider({ children }: { children: React.ReactNode }) {
     recordRecentEquipment,
     activeDepartment: state.activeDepartment,
     setActiveDepartment,
+    activeChemistryBench: state.activeChemistryBench,
+    setActiveChemistryBench,
     workbenchHandoff,
     setWorkbenchHandoff,
     savedDiscoveryIds: state.savedDiscoveryIds,

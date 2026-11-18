@@ -17,7 +17,7 @@ export type LearningMode =
   | 'algorithm'
   | 'biological-process';
 
-export type SmartLanguage = 'en' | 'kn';
+export type SmartLanguage = 'en' | 'kn' | 'hi';
 
 export type EducationLevel =
   | 'classes-5-7'
@@ -52,6 +52,7 @@ export type SceneVisualKind =
   | 'cs-sorting'
   | 'cs-cpu-cycle'
   | 'cs-transistor'
+  | 'astronomy-orbit'
   | 'general-scientific-diagram';
 
 export interface SmartSceneSpec {

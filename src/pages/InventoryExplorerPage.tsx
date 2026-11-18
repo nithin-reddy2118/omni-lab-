@@ -5,6 +5,7 @@ import { CHEMISTRY_CHEMICAL_VAULT } from '../data/chemicals';
 import { ADVANCED_INSTRUMENT_GUIDES } from '../data/divisions';
 import { LAB_INSTRUMENTS, LAB_ROOMS } from '../data/labEquipment';
 import { EquipmentIllustration } from '../components/lab/EquipmentIllustration';
+import { AudioNarrationBar } from '../components/ui/AudioNarrationBar';
 import type { LabDepartmentId } from '../types/science';
 
 type InventoryTab = 'equipment' | 'chemicals' | 'advanced';
@@ -184,6 +185,14 @@ export function InventoryExplorerPage() {
               <div className="text-[11px] text-slate-700 bg-slate-50 rounded-lg p-2 border border-slate-100">
                 <strong>Principle:</strong> {inst.scientificPrinciple}
               </div>
+              <AudioNarrationBar
+                compact
+                title={inst.name}
+                segments={[
+                  { label: inst.name, text: inst.functionSummary },
+                  { label: 'Scientific Principle', text: inst.scientificPrinciple },
+                ]}
+              />
               <button
                 type="button"
                 onClick={() =>
@@ -232,6 +241,14 @@ export function InventoryExplorerPage() {
                   <strong>Safety ({chem.safetyLevel}):</strong> {chem.safetyNote}
                 </div>
               </div>
+              <AudioNarrationBar
+                compact
+                title={chem.symbol}
+                segments={[
+                  { label: `${chem.name} (${chem.symbol})`, text: `IUPAC name: ${chem.iupacName}. Molar mass ${chem.molarMassGmol} grams per mole.` },
+                  { label: 'Safety', text: chem.safetyNote },
+                ]}
+              />
               <button
                 type="button"
                 onClick={() => launchChemicalInLab(chem.id, chem.compatibleExperiments[0])}
@@ -287,6 +304,14 @@ export function InventoryExplorerPage() {
                     <strong>Limitations:</strong> {guide.limitations}
                   </div>
                 </div>
+                <AudioNarrationBar
+                  compact
+                  title={guide.name}
+                  segments={[
+                    { label: 'Working Principle', text: guide.workingPrinciple },
+                    { label: 'Parameters', text: `Operating parameters: ${guide.operatingParameters}. Units: ${guide.measurementUnits}. Limitations: ${guide.limitations}` },
+                  ]}
+                />
                 {guide.linkedModelId && (
                   <button
                     type="button"

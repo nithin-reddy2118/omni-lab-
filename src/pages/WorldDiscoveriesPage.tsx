@@ -1,8 +1,9 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { Bookmark, ExternalLink, Globe2, Loader2, RotateCcw, Sparkles } from 'lucide-react';
+import { Bookmark, ExternalLink, Film, Globe2, Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import { DISCOVERY_CATEGORIES, WORLD_DISCOVERIES } from '../data/discoveries';
 import { useLab } from '../context/LabContext';
 import type { DiscoveryItem } from '../types/science';
+import { AudioNarrationBar } from '../components/ui/AudioNarrationBar';
 import { Modal } from '../components/ui/Modal';
 
 interface DiscoveryExplanation {
@@ -13,7 +14,13 @@ interface DiscoveryExplanation {
 }
 
 export function WorldDiscoveriesPage() {
-  const { savedDiscoveryIds, toggleSaveDiscovery, language } = useLab();
+  const {
+    savedDiscoveryIds,
+    toggleSaveDiscovery,
+    language,
+    navigate,
+    setSmartLearningPrefillQuery,
+  } = useLab();
   const [category, setCategory] = useState<string>('All');
   const [search, setSearch] = useState('');
   const [explainingItem, setExplainingItem] = useState<DiscoveryItem | null>(null);
@@ -144,6 +151,15 @@ export function WorldDiscoveriesPage() {
                   </div>
                 </div>
 
+                <AudioNarrationBar
+                  compact
+                  title={d.title}
+                  segments={[
+                    { label: d.title, text: d.summary },
+                    { label: 'Why It Matters', text: d.whyItMatters },
+                  ]}
+                />
+
                 <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs">
                   <a
                     href={d.sourceUrl}
@@ -154,7 +170,7 @@ export function WorldDiscoveriesPage() {
                     {d.sourceName} <ExternalLink className="w-3 h-3" />
                   </a>
 
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => toggleSaveDiscovery(d.id)}
@@ -164,6 +180,17 @@ export function WorldDiscoveriesPage() {
                     >
                       <Bookmark className="w-3.5 h-3.5" />
                       {isSaved ? 'Saved' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSmartLearningPrefillQuery(d.title);
+                        navigate('smart-learning');
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 font-semibold hover:border-emerald-500 inline-flex items-center gap-1"
+                    >
+                      <Film className="w-3.5 h-3.5 text-emerald-700" />
+                      Video
                     </button>
                     <button
                       type="button"
@@ -240,6 +267,15 @@ export function WorldDiscoveriesPage() {
 
             {explanation && (
               <div className="space-y-3 text-sm">
+                <AudioNarrationBar
+                  title={`Explain: ${explainingItem.title}`}
+                  segments={[
+                    { label: 'Plain Explanation', text: explanation.plainSummary },
+                    { label: 'Analogy', text: explanation.analogy },
+                    { label: 'School Connection', text: explanation.howItConnectsToSchoolScience },
+                    { label: 'Open Questions', text: explanation.openQuestions },
+                  ]}
+                />
                 <div className="rounded-lg bg-slate-50 p-4 border border-slate-200">
                   <div className="text-xs font-semibold text-blue-700 mb-1">Plain Explanation</div>
                   <p className="text-slate-900 leading-relaxed">{explanation.plainSummary}</p>

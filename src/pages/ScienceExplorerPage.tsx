@@ -16,6 +16,7 @@ import {
 import { ScienceVideoStage } from '../components/explorer/ScienceVideoStage';
 import { ScientificIllustrationFallback } from '../components/explorer/ScientificIllustrationFallback';
 import { SmartVideoLessonWidget } from '../components/smart/SmartVideoLessonWidget';
+import { AudioNarrationBar } from '../components/ui/AudioNarrationBar';
 import { useLab } from '../context/LabContext';
 import { getSafetyBadgeMeta } from '../engine/safetyEngine';
 import type {
@@ -440,6 +441,15 @@ export function ScienceExplorerPage() {
             </div>
 
             <p className="text-base text-slate-800 leading-relaxed">{result.conceptExplanation}</p>
+
+            <AudioNarrationBar
+              title={`${result.subject} Explanation`}
+              segments={[
+                { label: 'Concept', text: result.conceptExplanation },
+                { label: 'Core Principles', text: result.scientificPrinciples.join('. ') },
+                { label: 'Applications', text: result.realWorldApplications.join('. ') },
+              ]}
+            />
 
             {result.formulaHighlight && (
               <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-4 flex items-start gap-3">

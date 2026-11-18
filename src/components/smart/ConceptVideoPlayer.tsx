@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { renderSmartSceneFrame } from '../../engine/smartCanvasRenderer';
 import { buildSrtContent } from '../../engine/smartLessonEngine';
+import { synthesizeAndValidateAudio } from '../../utils/audioPlayer';
 import type {
   EnvironmentCapabilities,
   SmartLanguage,
@@ -74,6 +75,8 @@ export function ConceptVideoPlayer({
   const [pipelineError, setPipelineError] = useState<string | null>(null);
   const [renderedMp4Url, setRenderedMp4Url] = useState<string | null>(null);
   const [renderedMp4SizeBytes, setRenderedMp4SizeBytes] = useState<number>(0);
+  const [mp4Verified, setMp4Verified] = useState<boolean>(false);
+  const [mp4PlaybackError, setMp4PlaybackError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'canvas' | 'mp4'>('canvas');
 
   const sceneTimings = useMemo(() => {
@@ -193,58 +196,30 @@ export function ConceptVideoPlayer({
 
   const handleGenerateNarration = async (): Promise<string | null> => {
     setTtsStatus('loading');
-    setTtsMessage(`Requesting real voice narration (${ttsVoice}) via Gemini TTS...`);
-    try {
-      const resp = await fetch('/api/smart-learning/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: lesson.narrationScript,
-          language: lesson.language,
-          voiceName: ttsVoice,
-        }),
-      });
-      const data = (await resp.json()) as {
-        available?: boolean;
-        audioBase64?: string;
-        mimeType?: string;
-        reason?: string;
-        modelUsed?: string;
-      };
+    setTtsMessage(`Synthesizing & validating voice narration (${ttsVoice})...`);
+    const result = await synthesizeAndValidateAudio({
+      text: lesson.narrationScript,
+      language: lesson.language,
+      voiceName: ttsVoice,
+    });
 
-      if (!data.available || !data.audioBase64) {
-        setTtsStatus('unavailable');
-        setTtsMessage(
-          data.reason ||
-            'Voice narration provider is currently unavailable. Use Device Speech Fallback or synchronized subtitles.'
-        );
-        return null;
-      }
-
-      const byteChars = atob(data.audioBase64);
-      const byteNums = new Uint8Array(byteChars.length);
-      for (let i = 0; i < byteChars.length; i++) {
-        byteNums[i] = byteChars.charCodeAt(i);
-      }
-      const blob = new Blob([byteNums], { type: data.mimeType || 'audio/wav' });
-      const blobUrl = URL.createObjectURL(blob);
-      if (ttsAudioUrl) URL.revokeObjectURL(ttsAudioUrl);
-      setTtsAudioUrl(blobUrl);
-      setTtsAudioBase64(data.audioBase64);
-      setTtsStatus('ready');
-      setTtsMessage(
-        `${lesson.language === 'kn' ? 'Kannada' : 'English'} voice narration ready (${ttsVoice}${data.modelUsed ? ` · ${data.modelUsed}` : ''}).`
-      );
-      return data.audioBase64;
-    } catch (err) {
+    if (!result.ok) {
       setTtsStatus('unavailable');
       setTtsMessage(
-        err instanceof Error
-          ? `${err.message} Text explanation & subtitles remain active.`
-          : 'Voice service unreachable.'
+        `${result.reason} Use Device Speech Fallback or synchronized subtitles.`
       );
       return null;
     }
+
+    setTtsAudioUrl(result.blobUrl);
+    setTtsAudioBase64(result.audioBase64);
+    setTtsStatus('ready');
+    const langName =
+      lesson.language === 'kn' ? 'Kannada' : lesson.language === 'hi' ? 'Hindi' : 'English';
+    setTtsMessage(
+      `${langName} WAV verified (${result.chunkCount} chunk${result.chunkCount > 1 ? 's' : ''} · ${(result.byteLength / 1024).toFixed(1)} KB · ${ttsVoice}${result.modelUsed ? ` · ${result.modelUsed}` : ''}${result.cached ? ' · Cached' : ''}).`
+    );
+    return result.audioBase64;
   };
 
   const handleToggleDeviceSpeech = () => {
@@ -257,7 +232,7 @@ export function ConceptVideoPlayer({
     window.speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(lesson.narrationScript);
     utter.rate = playbackSpeed;
-    utter.lang = lesson.language === 'kn' ? 'kn-IN' : 'en-US';
+    utter.lang = lesson.language === 'kn' ? 'kn-IN' : lesson.language === 'hi' ? 'hi-IN' : 'en-US';
     utter.onend = () => setDeviceSpeechPlaying(false);
     utter.onerror = () => setDeviceSpeechPlaying(false);
     setDeviceSpeechPlaying(true);
@@ -458,6 +433,15 @@ export function ConceptVideoPlayer({
               >
                 ಕನ್ನಡ
               </button>
+              <button
+                type="button"
+                onClick={() => onLanguageSwitch('hi')}
+                className={`px-2.5 py-1 rounded-md font-medium ${
+                  lesson.language === 'hi' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600'
+                }`}
+              >
+                हिन्दी
+              </button>
             </div>
           )}
         </div>
@@ -466,12 +450,53 @@ export function ConceptVideoPlayer({
       {/* Main Theater Viewport */}
       <div className="relative bg-[#0B1324] aspect-video w-full overflow-hidden">
         {viewMode === 'mp4' && renderedMp4Url ? (
-          <video
-            src={renderedMp4Url}
-            controls
-            autoPlay
-            className="w-full h-full object-contain bg-[#0B1324]"
-          />
+          mp4PlaybackError ? (
+            <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center text-white gap-3">
+              <AlertTriangle className="w-8 h-8 text-amber-400" />
+              <div className="text-sm font-semibold">{mp4PlaybackError}</div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMp4PlaybackError(null);
+                    setViewMode('canvas');
+                  }}
+                  className="px-3.5 py-2 rounded-lg bg-blue-600 text-xs font-semibold"
+                >
+                  Switch to Interactive Canvas
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRenderMp4}
+                  className="px-3.5 py-2 rounded-lg border border-slate-500 text-xs font-semibold"
+                >
+                  Retry Render
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="relative w-full h-full">
+              <video
+                src={renderedMp4Url}
+                controls
+                autoPlay
+                playsInline
+                onLoadedMetadata={() => {
+                  setMp4Verified(true);
+                  setMp4PlaybackError(null);
+                }}
+                onError={() =>
+                  setMp4PlaybackError('Browser failed to decode rendered MP4 stream.')
+                }
+                className="w-full h-full object-contain bg-[#0B1324]"
+              />
+              {mp4Verified && (
+                <span className="absolute top-3 right-3 px-2.5 py-1 rounded bg-emerald-900/85 border border-emerald-400/50 text-emerald-200 text-[10px] font-mono">
+                  MP4 Decoded &amp; Verified
+                </span>
+              )}
+            </div>
+          )
         ) : (
           <canvas
             ref={canvasRef}

@@ -183,7 +183,7 @@ export function evaluateBenchChemistryInteraction(
     (subs.has('chem-sub-naoh') || subs.has('chem-sub-nahco3'))
   ) {
     const isCarbonate = subs.has('chem-sub-nahco3');
-    const hasPheno = subs.has('chem-sub-phenolphthalein');
+    const hasPheno = subs.has('chem-sub-phenol') || subs.has('chem-sub-phenolphthalein');
     const hasUniversal = subs.has('chem-sub-universal');
     const vAcidMl = Math.max(1, input.reagentAmountsMl?.['chem-sub-hcl'] ?? input.reagentAmountsMl?.['chem-sub-ch3cooh'] ?? 25);
     const vBaseMl = Math.max(1, input.reagentAmountsMl?.['chem-sub-naoh'] ?? input.reagentAmountsMl?.['chem-sub-nahco3'] ?? 25);
@@ -381,7 +381,8 @@ export function evaluateBenchChemistryInteraction(
   const hasAcidOnly = subs.has('chem-sub-hcl') || subs.has('chem-sub-ch3cooh');
   const hasBaseOnly = subs.has('chem-sub-naoh');
   const hasUniversal = subs.has('chem-sub-universal');
-  const hasPheno = subs.has('chem-sub-phenolphthalein');
+  const hasPheno = subs.has('chem-sub-phenol') || subs.has('chem-sub-phenolphthalein');
+  const hasEthanol = subs.has('chem-sub-ethanol');
 
   let liquidColorHex = '#38BDF8';
   let phEstimate: number | null = 7.0;
@@ -393,29 +394,42 @@ export function evaluateBenchChemistryInteraction(
     liquidColorHex = hasPheno ? '#EC4899' : hasUniversal ? '#6366F1' : '#E0F2FE';
   } else if (hasUniversal) {
     liquidColorHex = '#10B981';
+  } else if (hasEthanol) {
+    liquidColorHex = '#DDD6FE';
   }
 
   return {
-    id: subs.has('chem-sub-nacl') ? 'aqueous-nacl-heating' : 'pure-water-thermal',
+    id: subs.has('chem-sub-nacl')
+      ? 'aqueous-nacl-heating'
+      : hasEthanol
+        ? 'ethanol-solvent-vessel'
+        : 'pure-water-thermal',
     title:
       subs.size === 0
-        ? 'Empty Glassware Vessel (Load a Virtual Substance)'
+        ? 'Empty Glassware Vessel (Pour a Substance by Drag & Drop)'
         : hasAcidOnly
           ? 'Aqueous Acid Solution'
           : hasBaseOnly
             ? 'Aqueous Alkaline Solution'
-            : 'Pure Distilled Water (IAPWS-IF97 Phase Model)',
-    equation: isBoiling
-      ? 'H₂O(l) → H₂O(g)   [P_vap(T) = P_ext]'
-      : 'H₂O(l) + Q → H₂O(l) (ΔT = Q / mc)',
-    safetyLevel: 'GREEN',
+            : hasEthanol
+              ? 'Ethanol Solvent Mixture'
+              : 'Pure Distilled Water (IAPWS-IF97 Phase Model)',
+    equation:
+      subs.size === 0
+        ? 'Awaiting liquid or solid transfer into vessel'
+        : isBoiling
+          ? 'H₂O(l) → H₂O(g)   [P_vap(T) = P_ext]'
+          : hasEthanol
+            ? 'C₂H₅OH(l)  [ρ = 0.789 g/cm³]'
+            : 'H₂O(l) + Q → H₂O(l) (ΔT = Q / mc)',
+    safetyLevel: hasEthanol && isHeatingActive ? 'AMBER' : 'GREEN',
     blocked: false,
     isActiveReaction: isHeatingActive,
     isBoiling,
     vesselTempC: isHeatingActive || input.liveTempC > 25.1 ? input.liveTempC : 25,
-    targetBoilingC: targetBoilC,
+    targetBoilingC: hasEthanol ? 78.37 : targetBoilC,
     liquidColorHex,
-    liquidOpacity: subs.size === 0 ? 0.1 : 0.55,
+    liquidOpacity: subs.size === 0 ? 0.08 : 0.58,
     gasEvolution: isBoiling
       ? {
           active: true,

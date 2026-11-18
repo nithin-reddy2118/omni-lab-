@@ -99,7 +99,7 @@ function AppShell() {
       <TopHeader />
       <Sidebar />
       <main
-        className={`flex-1 transition-[padding] duration-200 ${
+        className={`flex-1 min-w-0 max-w-full overflow-x-hidden transition-[padding] duration-200 ${
           sidebarOpen ? 'lg:pl-72' : ''
         }`}
       >

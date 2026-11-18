@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -9,10 +9,9 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
-  Square,
-  Volume2,
 } from 'lucide-react';
 import { useLab } from '../context/LabContext';
+import { AudioNarrationBar } from '../components/ui/AudioNarrationBar';
 import {
   EDUCATION_DIVISIONS,
   HIGHER_EDUCATION_STAGES,
@@ -74,21 +73,6 @@ export function LabTutorPage() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [tutorResult, setTutorResult] = useState<TutorGuideResponse | null>(null);
   const [modelUsed, setModelUsed] = useState<string | null>(null);
-  const [ttsPlaying, setTtsPlaying] = useState(false);
-  const [ttsNotice, setTtsNotice] = useState<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-    };
-  }, []);
 
   const divDef = EDUCATION_DIVISIONS[activeDivision];
   const experiment = getExperimentById(activeExperimentId) ?? EXPERIMENTS[0];
@@ -253,72 +237,6 @@ export function LabTutorPage() {
     }
   };
 
-  const stopStageSpeech = () => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    setTtsPlaying(false);
-  };
-
-  const speakStage = async () => {
-    if (ttsPlaying) {
-      stopStageSpeech();
-      return;
-    }
-    setTtsPlaying(true);
-    setTtsNotice(null);
-    const spokenText = `${deterministicStageContent.title}. ${deterministicStageContent.body}`;
-    try {
-      const resp = await fetch('/api/smart-learning/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: spokenText,
-          language: language === 'kn' ? 'kn' : 'en',
-          voiceName: 'Kore',
-        }),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data.available && data.audioBase64) {
-          const byteChars = atob(data.audioBase64);
-          const byteNums = new Uint8Array(byteChars.length);
-          for (let i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
-          const blobUrl = URL.createObjectURL(new Blob([byteNums], { type: data.mimeType || 'audio/wav' }));
-          const audio = new Audio(blobUrl);
-          audioRef.current = audio;
-          audio.onended = () => {
-            URL.revokeObjectURL(blobUrl);
-            setTtsPlaying(false);
-          };
-          audio.onerror = () => {
-            URL.revokeObjectURL(blobUrl);
-            setTtsPlaying(false);
-            setTtsNotice('Audio playback error; check device audio output.');
-          };
-          await audio.play();
-          return;
-        }
-        setTtsNotice(data.reason || 'Server voice narration unavailable; using browser speech.');
-      }
-    } catch {
-      setTtsNotice('Server voice service unreachable; using browser speech if supported.');
-    }
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      const utter = new SpeechSynthesisUtterance(spokenText);
-      utter.lang = language === 'kn' ? 'kn-IN' : 'en-US';
-      utter.onend = () => setTtsPlaying(false);
-      utter.onerror = () => setTtsPlaying(false);
-      window.speechSynthesis.speak(utter);
-      return;
-    }
-    setTtsPlaying(false);
-  };
-
   return (
     <div className="space-y-6">
       {/* Header & Calibrated Level Picker */}
@@ -398,18 +316,6 @@ export function LabTutorPage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={speakStage}
-              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 ${
-                ttsPlaying
-                  ? 'border-amber-400 bg-amber-50 text-amber-900'
-                  : 'border-slate-200 bg-slate-50 text-slate-800 hover:border-blue-400'
-              }`}
-            >
-              {ttsPlaying ? <Square className="w-3.5 h-3.5 text-amber-700" /> : <Volume2 className="w-3.5 h-3.5 text-blue-700" />}
-              {ttsPlaying ? 'Stop Reading' : 'Read Aloud'}
-            </button>
-            <button
-              type="button"
               onClick={() => navigate('virtual-lab', { experimentId: experiment.id })}
               className="px-3 py-1.5 rounded-lg bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 flex items-center gap-1.5"
             >
@@ -419,22 +325,13 @@ export function LabTutorPage() {
           </div>
         </div>
 
-        {ttsNotice && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
-            {ttsNotice}
-          </div>
-        )}
-
         {/* 16 Stage Progress Strip */}
         <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
           {SIXTEEN_STAGE_TITLES.map((title, idx) => (
             <button
               key={title}
               type="button"
-              onClick={() => {
-                stopStageSpeech();
-                setStageIdx(idx);
-              }}
+              onClick={() => setStageIdx(idx)}
               title={title}
               className={`h-8 rounded-lg font-mono text-xs font-bold transition-colors border ${
                 idx === stageIdx
@@ -460,16 +357,21 @@ export function LabTutorPage() {
               <strong>Bench Action:</strong> {deterministicStageContent.actionHint}
             </span>
           </div>
+          <AudioNarrationBar
+            title={`Stage ${stageIdx + 1} Walkthrough`}
+            language={language}
+            segments={[
+              { label: deterministicStageContent.title, text: deterministicStageContent.body },
+              { label: 'Bench Action', text: deterministicStageContent.actionHint },
+            ]}
+          />
         </div>
 
         <div className="flex items-center justify-between">
           <button
             type="button"
             disabled={stageIdx === 0}
-            onClick={() => {
-              stopStageSpeech();
-              setStageIdx((i) => Math.max(0, i - 1));
-            }}
+            onClick={() => setStageIdx((i) => Math.max(0, i - 1))}
             className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 disabled:opacity-40 flex items-center gap-1"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -477,10 +379,7 @@ export function LabTutorPage() {
           </button>
           <button
             type="button"
-            onClick={() => {
-              stopStageSpeech();
-              setStageIdx((i) => (i < 15 ? i + 1 : 0));
-            }}
+            onClick={() => setStageIdx((i) => (i < 15 ? i + 1 : 0))}
             className="px-4 py-2 rounded-lg bg-blue-700 text-white text-xs font-bold hover:bg-blue-800 flex items-center gap-1"
           >
             {stageIdx < 15 ? 'Next Stage' : 'Restart 16 Stages'}
@@ -554,6 +453,17 @@ export function LabTutorPage() {
               )}
             </div>
             <p className="text-sm text-slate-800 leading-relaxed">{tutorResult.conceptExplanation}</p>
+
+            <AudioNarrationBar
+              title="AI Tutor Answer"
+              language={language}
+              segments={[
+                { label: tutorResult.welcomeHeadline, text: tutorResult.conceptExplanation },
+                { label: 'Formula & Units', text: tutorResult.equationAndUnits },
+                { label: 'Safety Check', text: tutorResult.safetyCheck },
+                { label: 'Next Investigation Step', text: tutorResult.nextInvestigationStep },
+              ]}
+            />
 
             <div className="grid md:grid-cols-2 gap-3">
               <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-1">

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useLab } from '../../context/LabContext';
 import type { ExplorerResponse, ScienceVideoItem } from '../../types/science';
+import { AudioNarrationBar } from '../ui/AudioNarrationBar';
 import { ScientificIllustrationFallback } from './ScientificIllustrationFallback';
 
 interface ScienceVideoStageProps {
@@ -49,12 +50,14 @@ export function ScienceVideoStage({
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackFailed, setPlaybackFailed] = useState(false);
+  const [videoVerified, setVideoVerified] = useState(false);
   const [showExplanation, setShowExplanation] = useState(true);
   const [fallbackAnimPlaying, setFallbackAnimPlaying] = useState(true);
 
   useEffect(() => {
     setSelectedIdx(0);
     setPlaybackFailed(false);
+    setVideoVerified(false);
     setIsPlaying(false);
   }, [videos]);
 
@@ -126,6 +129,7 @@ export function ScienceVideoStage({
                   preload="metadata"
                   poster={activeVideo.thumbnailUrl}
                   src={activeVideo.playableUrl}
+                  onLoadedMetadata={() => setVideoVerified(true)}
                   onPlay={() => setIsPlaying(true)}
                   onPause={() => setIsPlaying(false)}
                   onEnded={() => setIsPlaying(false)}
@@ -136,8 +140,13 @@ export function ScienceVideoStage({
 
               <div className="p-4 space-y-2 bg-white">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-blue-700">
-                  <span className="font-semibold">
+                  <span className="font-semibold flex items-center gap-1.5">
                     {activeVideo.provider} · {activeVideo.creator}
+                    {videoVerified && (
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 font-mono text-[10px]">
+                        Stream Verified
+                      </span>
+                    )}
                   </span>
                   {formatDuration(activeVideo.durationSeconds) && (
                     <span className="font-mono tabular-nums text-slate-500">
@@ -326,6 +335,14 @@ export function ScienceVideoStage({
         {/* Right: AI Classes 6–10 Phenomenon Explanation */}
         {showExplanation && (
           <div className="lg:col-span-6 space-y-3">
+            <AudioNarrationBar
+              title="Concept Audio Guide"
+              segments={[
+                { label: 'What Is Happening', text: breakdown.whatIsHappening },
+                { label: 'Why It Happens', text: breakdown.whyItHappens },
+                { label: 'Scientific Laws', text: breakdown.scientificLaws.join('. ') },
+              ]}
+            />
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3 text-xs sm:text-sm">
               <div>
                 <div className="text-xs font-semibold text-blue-700">What Is Happening?</div>

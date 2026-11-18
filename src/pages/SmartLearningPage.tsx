@@ -89,7 +89,9 @@ export function SmartLearningPage() {
   const [educationLevel, setEducationLevel] = useState<EducationLevel>('classes-8-10');
   const [learningStyle, setLearningStyle] = useState<LearningStyle>('visual');
   const [durationPreset, setDurationPreset] = useState<VideoDurationPreset>('standard');
-  const [lessonLang, setLessonLang] = useState<SmartLanguage>(language === 'kn' ? 'kn' : 'en');
+  const [lessonLang, setLessonLang] = useState<SmartLanguage>(
+    language === 'kn' ? 'kn' : language === 'hi' ? 'hi' : 'en'
+  );
 
   const [capabilities, setCapabilities] = useState<EnvironmentCapabilities | null>(null);
   const [lesson, setLesson] = useState<SmartLessonPackage | null>(null);
@@ -433,6 +435,7 @@ export function SmartLearningPage() {
             >
               <option value="en">English (en)</option>
               <option value="kn">ಕನ್ನಡ (kn)</option>
+              <option value="hi">हिन्दी (hi)</option>
             </select>
           </div>
         </div>

@@ -1,31 +1,46 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   BarChart3,
   BookOpen,
   CheckCircle2,
   Cpu,
   Download,
+  Droplets,
   FileText,
   Film,
   FlaskConical,
   HelpCircle,
+  Link2,
   ListChecks,
   Mountain,
+  NotebookPen,
   Play,
+  Plus,
   RotateCcw,
   Save,
   Sparkles,
 } from 'lucide-react';
 import { useLab } from '../context/LabContext';
-import { getRecommendedKitForExperiment } from '../data/labEquipment';
+import { getInstrumentById, getRecommendedKitForExperiment } from '../data/labEquipment';
 import {
   EXPERIMENTS,
   getDefaultParams,
   getExperimentById,
 } from '../engine/experiments';
+import { findExperimentsForBenchSetup } from '../engine/equipmentRegistry';
+import { executeScientificExperiment, validateWorkbenchSetup } from '../engine/executionEngine';
 import { getSafetyBadgeMeta } from '../engine/safetyEngine';
-import type { CurriculumExperimentEntry, LabDepartmentId, TrialRecord } from '../types/science';
+import type {
+  ChemistryBenchSyncState,
+  CurriculumExperimentEntry,
+  LabDepartmentId,
+  TrialRecord,
+  WorkbenchConnection,
+  WorkbenchItem,
+} from '../types/science';
 import { Accordion } from '../components/ui/Accordion';
+import { AudioNarrationBar } from '../components/ui/AudioNarrationBar';
 import { BoilingAltitudeLab } from '../components/lab/BoilingAltitudeLab';
 import { CurriculumCatalogPanel } from '../components/lab/CurriculumCatalogPanel';
 import { ExperimentGraphWorkspace } from '../components/lab/ExperimentGraphWorkspace';
@@ -33,7 +48,7 @@ import { ExperimentVideoPanel } from '../components/lab/ExperimentVideoPanel';
 import { PredictionChallengeCard } from '../components/lab/PredictionChallengeCard';
 import { ScienceCampusLobby } from '../components/lab/ScienceCampusLobby';
 import { TrialManagerPanel } from '../components/lab/TrialManagerPanel';
-import { VirtualLabRoom } from '../components/lab/VirtualLabRoom';
+import { VirtualLabRoom, type BenchCommandRequest } from '../components/lab/VirtualLabRoom';
 import { exportExperimentPdfReport, exportTrialsCsv } from '../utils/exportUtils';
 
 type LabTab =
@@ -47,6 +62,7 @@ type LabTab =
 
 export function VirtualLabPage() {
   const {
+    activeDivision,
     activeExperimentId,
     setActiveExperimentId,
     activeDepartment,
@@ -58,6 +74,7 @@ export function VirtualLabPage() {
     predictionsByExperiment,
     savePrediction,
     addSavedReport,
+    saveNotebookEntry,
     workbenchHandoff,
     setWorkbenchHandoff,
     navigate,
@@ -75,14 +92,59 @@ export function VirtualLabPage() {
     getDefaultParams(experiment)
   );
   const [hasRunCurrent, setHasRunCurrent] = useState(false);
-  const [feedbackBanner, setFeedbackBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [feedbackBanner, setFeedbackBanner] = useState<{
+    type: 'success' | 'error';
+    text: string;
+    openNotebookLink?: boolean;
+  } | null>(null);
   const [studentNotes, setStudentNotes] = useState('');
+  const [chemistrySync, setChemistrySync] = useState<ChemistryBenchSyncState | null>(null);
+  const [autoSyncFromBench, setAutoSyncFromBench] = useState(true);
+  const lastSyncedTotalRef = useRef<number>(0);
+  const [benchItems, setBenchItems] = useState<WorkbenchItem[]>([]);
+  const [benchConnections, setBenchConnections] = useState<WorkbenchConnection[]>([]);
+  const [benchCommand, setBenchCommand] = useState<BenchCommandRequest | null>(null);
+
+  const handleWorkbenchStateChange = useCallback(
+    (items: WorkbenchItem[], conns: WorkbenchConnection[]) => {
+      setBenchItems(items);
+      setBenchConnections(conns);
+    },
+    []
+  );
 
   useEffect(() => {
     setParams(getDefaultParams(experiment));
     setHasRunCurrent(false);
     setFeedbackBanner(null);
+    setChemistrySync(null);
+    lastSyncedTotalRef.current = 0;
   }, [experiment]);
+
+  useEffect(() => {
+    if (
+      !autoSyncFromBench ||
+      activeDepartment !== 'chemistry' ||
+      !chemistrySync ||
+      !chemistrySync.hasPouredContent ||
+      chemistrySync.experimentId !== experiment.id
+    ) {
+      return;
+    }
+    if (chemistrySync.totalTransferredMlOrG !== lastSyncedTotalRef.current) {
+      lastSyncedTotalRef.current = chemistrySync.totalTransferredMlOrG;
+      setParams((prev) => {
+        const next = { ...prev };
+        for (const p of experiment.parameters) {
+          const val = chemistrySync.derivedParams[p.key];
+          if (typeof val === 'number' && !Number.isNaN(val)) {
+            next[p.key] = Math.min(p.max, Math.max(p.min, val));
+          }
+        }
+        return next;
+      });
+    }
+  }, [autoSyncFromBench, activeDepartment, chemistrySync, experiment]);
 
   useEffect(() => {
     if (!workbenchHandoff) return;
@@ -107,6 +169,52 @@ export function VirtualLabPage() {
   const result = useMemo(() => experiment.calculate(params), [experiment, params]);
   const trials = trialsByExperiment[experiment.id] ?? [];
   const safetyMeta = getSafetyBadgeMeta(experiment.safetyLevel);
+
+  const benchValidation = useMemo(
+    () =>
+      validateWorkbenchSetup({
+        experimentId: experiment.id,
+        params,
+        workbenchItems: benchItems,
+        connections: benchConnections,
+      }),
+    [experiment.id, params, benchItems, benchConnections]
+  );
+
+  const compatibleBenchExperiments = useMemo(
+    () => findExperimentsForBenchSetup(benchItems).slice(0, 4),
+    [benchItems]
+  );
+
+  const experimentNarrationText = useMemo(
+    () =>
+      [
+        `Experiment ${experiment.number}: ${experiment.title}.`,
+        experiment.explanation,
+        `Scientific principle: ${experiment.principle}.`,
+        `Learning objective: ${experiment.learningObjective}.`,
+        `Hypothesis: ${experiment.hypothesis}.`,
+        `Formula: ${experiment.formula}. ${experiment.formulaDescription}`,
+      ]
+        .filter(Boolean)
+        .join(' '),
+    [experiment]
+  );
+
+  const resultsNarrationText = useMemo(
+    () =>
+      [
+        `Simulated result for ${experiment.title}.`,
+        `${result.primaryLabel} equals ${result.primaryValue} ${result.primaryUnit}.`,
+        result.secondaryMetrics
+          .map((m) => `${m.label}: ${m.value} ${m.unit}`)
+          .join('. '),
+        `Conclusion: ${experiment.graphInterpretation.conclusion}.`,
+      ]
+        .filter(Boolean)
+        .join(' '),
+    [experiment, result]
+  );
 
   const handleParamChange = (key: string, val: number) => {
     const def = experiment.parameters.find((p) => p.key === key);
@@ -163,6 +271,65 @@ export function VirtualLabPage() {
     }
   };
 
+  const handleExecuteValidatedSetup = () => {
+    const exec = executeScientificExperiment({
+      experimentId: experiment.id,
+      params,
+      workbenchItems: benchItems,
+      connections: benchConnections,
+    });
+    if (!exec.ok) {
+      setFeedbackBanner({
+        type: 'error',
+        text: exec.error || 'Workbench setup is incomplete.',
+      });
+      return;
+    }
+    setHasRunCurrent(true);
+    setFeedbackBanner({
+      type: 'success',
+      text: `Validated setup executed! ${exec.apparatusReadouts?.map((r) => `${r.label}: ${r.value}`).join(' · ')}`,
+    });
+  };
+
+  const handleSaveToNotebook = () => {
+    const now = new Date().toISOString();
+    const apparatusSummary =
+      benchItems.length > 0
+        ? benchItems
+            .map((w) => getInstrumentById(w.instrumentId)?.name ?? w.instrumentId)
+            .join(', ')
+        : 'Virtual Parameter Simulation';
+    const paramSummary = experiment.parameters
+      .map((p) => `${p.label} (${p.symbol}) = ${params[p.key] ?? p.defaultValue} ${p.unit}`)
+      .join('; ');
+    const metricsSummary = [
+      `${result.primaryLabel} (${result.primarySymbol}) = ${result.primaryValue} ${result.primaryUnit}`,
+      ...result.secondaryMetrics.map((m) => `${m.label}: ${m.value} ${m.unit}`),
+    ].join(' | ');
+
+    saveNotebookEntry({
+      id: `nb-run-${Date.now()}`,
+      division: activeDivision,
+      title: `${experiment.shortTitle} — ${result.primarySymbol} = ${result.primaryValue} ${result.primaryUnit}`,
+      subject: experiment.subject,
+      hypothesis: experiment.hypothesis,
+      materialsAndSetup: `Apparatus: ${apparatusSummary}. Parameters: ${paramSummary}.`,
+      observations: metricsSummary,
+      calculationsAndEquations: `${experiment.formula} -> ${result.calculationSteps.slice(0, 3).join(' ; ')}`,
+      conclusion: studentNotes.trim() || experiment.graphInterpretation.conclusion,
+      safetyLevel: experiment.safetyLevel,
+      experimentId: experiment.id,
+      createdAt: now,
+      updatedAt: now,
+    });
+    setFeedbackBanner({
+      type: 'success',
+      text: `Saved experiment run "${experiment.shortTitle}" to Research Notebook.`,
+      openNotebookLink: true,
+    });
+  };
+
   const handleReset = () => {
     setParams(getDefaultParams(experiment));
     setHasRunCurrent(false);
@@ -189,9 +356,9 @@ export function VirtualLabPage() {
   };
 
   return (
-    <div className="space-y-6 pb-16">
+    <div className="space-y-6 pb-16 min-w-0 max-w-full">
       {/* Experiment Selector Strip */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm min-w-0 max-w-full">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <FlaskConical className="w-5 h-5 text-blue-700" />
@@ -210,7 +377,7 @@ export function VirtualLabPage() {
               setInsideLabRoom(true);
               setActiveTab('room');
             }}
-            className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm text-slate-900 max-w-full sm:w-80"
+            className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-sm text-slate-900 w-full sm:w-80 max-w-full"
           >
             {EXPERIMENTS.map((exp) => (
               <option key={exp.id} value={exp.id}>
@@ -221,7 +388,7 @@ export function VirtualLabPage() {
         </div>
 
         {/* Quick Pills for switching 10 modules */}
-        <div className="flex gap-2 overflow-x-auto pb-1">
+        <div className="flex gap-2 overflow-x-auto max-w-full min-w-0 pb-1">
           <button
             type="button"
             onClick={() => {
@@ -295,6 +462,12 @@ export function VirtualLabPage() {
             <span className="text-slate-900 font-medium">{experiment.controlledVariables.join(', ')}</span>
           </div>
         </div>
+
+        <AudioNarrationBar
+          title={`Experiment Procedure & Concept: ${experiment.shortTitle}`}
+          text={experimentNarrationText}
+          compact
+        />
       </div>
 
       {/* Workspace Tabs */}
@@ -334,7 +507,7 @@ export function VirtualLabPage() {
 
       {feedbackBanner && (
         <div
-          className={`rounded-lg border px-4 py-3 text-sm flex items-center justify-between gap-3 ${
+          className={`rounded-lg border px-4 py-3 text-sm flex flex-wrap items-center justify-between gap-3 ${
             feedbackBanner.type === 'success'
               ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
               : 'border-rose-200 bg-rose-50 text-rose-800'
@@ -344,13 +517,24 @@ export function VirtualLabPage() {
             <CheckCircle2 className="w-4 h-4 shrink-0" />
             {feedbackBanner.text}
           </span>
-          <button
-            type="button"
-            onClick={() => setFeedbackBanner(null)}
-            className="text-xs underline"
-          >
-            Dismiss
-          </button>
+          <div className="flex items-center gap-3">
+            {feedbackBanner.openNotebookLink && (
+              <button
+                type="button"
+                onClick={() => navigate('research-notebook')}
+                className="px-2.5 py-1 rounded-md bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800"
+              >
+                Open Research Notebook
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setFeedbackBanner(null)}
+              className="text-xs underline"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 
@@ -370,20 +554,135 @@ export function VirtualLabPage() {
                 setActiveDepartment(dept);
                 setInsideLabRoom(true);
               }}
-              onOpenBoilingAltitudeDemo={() => setActiveTab('boiling-demo')}
             />
           ) : (
-            <VirtualLabRoom
-              experiment={experiment}
-              params={params}
-              result={result}
-              onParamChange={handleParamChange}
-              onSelectExperiment={setActiveExperimentId}
-              onRecordTrial={() => handleRunAndRecord(true)}
-              onOpenBoilingAltitudeDemo={() => setActiveTab('boiling-demo')}
-              onExitToCampus={() => setInsideLabRoom(false)}
-              trialsCount={trials.length}
-            />
+            <>
+              <VirtualLabRoom
+                experiment={experiment}
+                params={params}
+                result={result}
+                onParamChange={handleParamChange}
+                onSelectExperiment={setActiveExperimentId}
+                onRecordTrial={() => handleRunAndRecord(true)}
+                onOpenBoilingAltitudeDemo={() => setActiveTab('boiling-demo')}
+                onExitToCampus={() => setInsideLabRoom(false)}
+                trialsCount={trials.length}
+                onChemistryBenchSync={setChemistrySync}
+                onWorkbenchStateChange={handleWorkbenchStateChange}
+                benchCommand={benchCommand}
+              />
+
+              {/* APPARATUS READINESS & LIVE EXECUTION SYNC BAR */}
+              <div
+                data-testid="apparatus-readiness-bar"
+                className={`rounded-xl border p-4 space-y-3 shadow-sm ${
+                  benchValidation.valid
+                    ? 'border-emerald-200 bg-emerald-50/70'
+                    : benchValidation.status === 'missing_equipment' || benchValidation.status === 'not_configured'
+                      ? 'border-amber-200 bg-amber-50/80'
+                      : 'border-rose-200 bg-rose-50/80'
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                      {benchValidation.valid ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-amber-700" />
+                      )}
+                      Apparatus Readiness ({experiment.shortTitle}):{' '}
+                      <span
+                        className={`font-mono uppercase text-[11px] px-2 py-0.5 rounded ${
+                          benchValidation.valid
+                            ? 'bg-emerald-700 text-white'
+                            : 'bg-amber-700 text-white'
+                        }`}
+                      >
+                        {benchValidation.status.replace('_', ' ')}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-700">
+                      {benchValidation.valid
+                        ? `${benchItems.length} placed apparatus & ${benchConnections.length} coupling(s) verified.`
+                        : benchValidation.compatibilityErrors[0] || benchValidation.guidanceSteps[0]}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(benchValidation.missingEquipmentIds.length > 0 || benchItems.length === 0) && (
+                      <button
+                        type="button"
+                        data-testid="add-missing-kit-btn"
+                        onClick={() =>
+                          setBenchCommand({ id: Date.now(), type: 'add-missing-kit' })
+                        }
+                        className="px-3.5 py-2 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 flex items-center gap-1.5 min-h-[38px]"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Add Missing Kit ({benchValidation.missingEquipmentNames.length || 'Recommended'})
+                      </button>
+                    )}
+                    {benchValidation.status === 'invalid_configuration' && benchItems.length >= 2 && (
+                      <button
+                        type="button"
+                        data-testid="auto-wire-tools-btn"
+                        onClick={() => setBenchCommand({ id: Date.now(), type: 'auto-wire' })}
+                        className="px-3.5 py-2 rounded-lg bg-blue-700 text-white text-xs font-bold hover:bg-blue-800 flex items-center gap-1.5 min-h-[38px]"
+                      >
+                        <Link2 className="w-3.5 h-3.5" />
+                        Auto-Wire Tools
+                      </button>
+                    )}
+                    {benchValidation.valid && (
+                      <button
+                        type="button"
+                        data-testid="run-validated-setup-btn"
+                        onClick={handleExecuteValidatedSetup}
+                        className="px-3.5 py-2 rounded-lg bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 flex items-center gap-1.5 min-h-[38px]"
+                      >
+                        <Play className="w-3.5 h-3.5" />
+                        Run Validated Setup
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {benchValidation.missingEquipmentNames.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-amber-950">
+                    <span className="font-semibold">Missing Slots:</span>
+                    {benchValidation.missingEquipmentNames.map((name) => (
+                      <span
+                        key={name}
+                        className="px-2 py-0.5 rounded bg-white border border-amber-200 font-medium"
+                      >
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {compatibleBenchExperiments.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-200/70 text-[11px]">
+                    <span className="text-slate-600 font-semibold">Detected Bench Matches:</span>
+                    {compatibleBenchExperiments.map((match) => (
+                      <button
+                        key={match.experimentId}
+                        type="button"
+                        onClick={() => setActiveExperimentId(match.experimentId)}
+                        className={`px-2 py-0.5 rounded border font-medium ${
+                          match.experimentId === experiment.id
+                            ? 'border-blue-600 bg-blue-50 text-blue-800 font-bold'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-blue-400'
+                        }`}
+                      >
+                        {match.shortTitle} ({match.readinessLabel})
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
           )}
 
           <PredictionChallengeCard
@@ -409,6 +708,69 @@ export function VirtualLabPage() {
                   {t.actions.reset}
                 </button>
               </div>
+
+              {activeDepartment === 'chemistry' && chemistrySync && (
+                <div
+                  data-testid="chemistry-bench-sync-card"
+                  className={`rounded-lg border p-3 text-xs space-y-2 ${
+                    chemistrySync.hasPouredContent
+                      ? 'border-sky-200 bg-sky-50/70 text-slate-800'
+                      : 'border-slate-200 bg-slate-50 text-slate-600'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-900 flex items-center gap-1.5">
+                      <Droplets className="w-3.5 h-3.5 text-sky-700" />
+                      Workbench Vessel Sync
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={autoSyncFromBench}
+                          onChange={(e) => setAutoSyncFromBench(e.target.checked)}
+                          className="accent-sky-700 rounded"
+                        />
+                        Auto-sync pours
+                      </label>
+                      {chemistrySync.hasPouredContent && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setParams((prev) => {
+                              const next = { ...prev };
+                              for (const p of experiment.parameters) {
+                                const val = chemistrySync.derivedParams[p.key];
+                                if (typeof val === 'number' && !Number.isNaN(val)) {
+                                  next[p.key] = Math.min(p.max, Math.max(p.min, val));
+                                }
+                              }
+                              return next;
+                            });
+                          }}
+                          className="px-2 py-1 rounded bg-white border border-sky-300 text-sky-800 font-semibold text-[11px] hover:bg-sky-100"
+                        >
+                          Sync Now
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-[11px] leading-snug">{chemistrySync.summaryNote}</p>
+                  {chemistrySync.vesselSummaries.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-0.5">
+                      {chemistrySync.vesselSummaries.map((v) => (
+                        <span
+                          key={v.instanceId}
+                          className="px-2 py-0.5 rounded bg-white border border-slate-200 font-mono text-[10px] text-slate-700 tabular-nums"
+                        >
+                          {v.label}: {v.currentAmount}/{v.capacity} {v.unit}
+                          {v.currentAmount > 0 ? ` (${v.substancesSummary})` : ' (Empty)'}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-5">
                 {experiment.parameters.map((param) => {
@@ -534,7 +896,22 @@ export function VirtualLabPage() {
                   <strong className="text-slate-900">Validity Range:</strong> {experiment.validityRange}
                 </div>
 
+                <AudioNarrationBar
+                  title="Narrate Calculated Outcome & Conclusion"
+                  text={resultsNarrationText}
+                  compact
+                />
+
                 <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    type="button"
+                    data-testid="save-run-notebook-btn"
+                    onClick={handleSaveToNotebook}
+                    className="px-3.5 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-xs font-bold text-emerald-800 hover:bg-emerald-100 flex items-center gap-1.5"
+                  >
+                    <NotebookPen className="w-3.5 h-3.5" />
+                    Save Run to Research Notebook
+                  </button>
                   <button
                     type="button"
                     onClick={() => setActiveTab('graphs')}
